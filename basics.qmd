@@ -3,6 +3,9 @@ title: Kernels and BO in Julia
 author: David Bindel
 date: 2025-06-19
 jupyter: julia-1.11
+format:
+  pdf:
+    monofont: "Fira Code"
 ---
 
 ```{julia}
