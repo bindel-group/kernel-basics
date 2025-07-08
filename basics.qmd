@@ -4,7 +4,10 @@ author: David Bindel
 date: 2025-06-19
 jupyter: julia-1.11
 format:
+  html:
+    toc: true
   pdf:
+    toc: true
     monofont: "Fira Code"
 ---
 
@@ -1577,7 +1580,7 @@ function Hθ_nllr(k, dθ_k!, Hθ_k!, X, y, s=1e-10; withz=true, kwargs...)
         end
     end
 
-    # Set up whitened matrices δK̃ and products δK*c and δK̃*c̃    
+    # Set up whitened matrices δK̃ and products δK*c and δK̃*c̃
     δK̃s = whiten_matrices!(δKs, KC)
     δK̃c̃s = mul_slices!(zeros(n,nt), δK̃s, c̃)
     δK̃r = reshape(δK̃s, n*n, nt)
@@ -1592,7 +1595,7 @@ function Hθ_nllr(k, dθ_k!, Hθ_k!, X, y, s=1e-10; withz=true, kwargs...)
         g[end] = -(c'*c)/Copt*s/2
     end
     mul!(H, g, g', -2.0/n, 1.0)
-    
+
     # And finish the gradient
     for j=1:nθ
         g[j] += tr(view(δK̃s,:,:,j))/2
@@ -1651,7 +1654,7 @@ let
     Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y) + 5e-4*cos(100*y), 40)
     ℓ, s = 0.7, 1e-4
     normgs = []
-    for j = 1:12        
+    for j = 1:12
         ϕ̄, ∇ϕ̄, Hϕ̄ = Hθ_nllr(k_SE, dθ_k_SE!, Hθ_k_SE!, Zk, y, s; ℓ=ℓ)
         u = -Hϕ̄\∇ϕ̄
         cut = " "
@@ -2020,14 +2023,14 @@ let
             u = -(H\g)
             ℓ += u[1]
         end
-        
+
         # Now adjust the noise variance
         kernel_matrix!(K, k_SE, Zk; ℓ=ℓ)
         ỹ[:] .= y
         tridiag_reduce!(K, ỹ)
         η, ϕ, ∂η_ϕ = min_nllrT!(K,ỹ,1e-10,1e-2,alpha,beta,c)
         println("$ℓ\t$η\t$ϕ\t$g\t$∂η_ϕ")
-        
+
     end
 
     println("--- Clean up with Newton ---")
@@ -2037,7 +2040,7 @@ let
         u = -H\g
         ℓ += u[1]
         η *= exp(u[2])
-    end    
+    end
 end
 ```
 
@@ -2156,8 +2159,140 @@ let
 
     check_fd(dx'*∇k_SE(x, y; ℓ=ℓ), s->k_SE(x+s*dx,y; ℓ=ℓ), 0.0),
     check_fd(dx'*Hk_SE(x, x; ℓ=ℓ)*dx,  s->dx'*∇k_SE(x+s*dx,x; ℓ=ℓ), 0.0),
-    check_fd(dx'*Hk_SE(x, y; ℓ=ℓ)*dx,  s->dx'*∇k_SE(x+s*dx,y; ℓ=ℓ), 0.0)   
+    check_fd(dx'*Hk_SE(x, y; ℓ=ℓ)*dx,  s->dx'*∇k_SE(x+s*dx,y; ℓ=ℓ), 0.0)
 end
 ```
 
-## Derivatives of predictive means and variances
+## Predictive mean
+
+The predictive mean is a linear combination $\sum_j c_j k(z, x_j)$;
+differentiating is straightforward because of linearity of differentiation.
+
+```{julia}
+function interpolant(z, X :: AbstractMatrix,
+                     c :: AbstractVector, k; kwargs...)
+    d, n = size(X)
+    sz = 0.0
+    for j = 1:n
+        xj = @view X[:,j]
+        sz += c[j]*k(z, xj; kwargs...)
+    end
+    sz
+end
+
+function ∇interpolant(z, X :: AbstractMatrix,
+                      c :: AbstractVector, ∇k!; kwargs...)
+    d, n = size(X)
+    ∇sz = zeros(size(z))
+    for j = 1:n
+        xj = @view X[:,j]
+        ∇k!(∇sz, z, xj, c[j]; kwargs...)
+    end
+    ∇sz
+end
+
+function Hinterpolant(z, X :: AbstractMatrix,
+                      c :: AbstractVector, Hk!; kwargs...)
+    d, n = size(X)
+    Hsz = zeros(length(z), length(z))
+    for j = 1:n
+        xj = @view X[:,j]
+        Hk!(Hsz, z, xj, c[j]; kwargs...)
+    end
+    Hsz
+end
+```
+
+Straightforward or not, we will stick with the habit of including a
+finite difference check.
+
+```{julia}
+let
+    Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y))
+    z = rand(2)
+    dz = rand(2)
+    ℓ = 0.8
+
+    KC = kernel_cholesky(k_SE, Zk; ℓ=ℓ)
+    c = KC\y
+
+    check_fd(dz'*∇interpolant(z, Zk, c, ∇k_SE!; ℓ=ℓ),
+             s->interpolant(z+s*dz, Zk, c, k_SE; ℓ=ℓ), 0.0),
+    check_fd(Hinterpolant(z, Zk, c, Hk_SE!; ℓ=ℓ)*dz,
+             s->∇interpolant(z+s*dz, Zk, c, ∇k_SE!; ℓ=ℓ), 0.0)
+end
+```
+
+## Predictive variance
+
+The predictive variance is a little less straighforward than the
+predictive mean, but only a little.  The formula is
+$$
+  v(z) = k(z,z) - k_{zX} K_{XX}^{-1} k_{Xz},
+$$
+where we will assume $k(z,z)$ is constant.  Differentiating once with
+respect to $z$ gives
+$$
+  \nabla v(x) = -2 \nabla k_{zX} (K_{XX}^{-1} k_{Xz}),
+$$
+and differentiating a second time gives
+$$
+  H_v(x) =
+  -2 \sum_j H_k(z, x_j) (K_{XX}^{-1} k_{Xz})_j
+  -2 (\nabla k_{zX}) K_{XX}^{-1} (\nabla k_{zX})^T.
+$$
+
+```{julia}
+function predvar(z, X, KC, k; kwargs...)
+    d, n = size(X)
+    kXz = [k(z, view(X,:,j); kwargs...) for j = 1:n]
+    k(z,z; kwargs...)-kXz'*(KC\kXz)
+end
+
+function ∇predvar(z, X, KC, k, ∇k!; kwargs...)
+    d, n = size(X)
+    kzX = zeros(n)
+    ∇kzX = zeros(d,n)
+    for j = 1:n
+        xj = @view X[:,j]
+        kzX[j] = k(z, xj; kwargs...)
+        ∇k!(view(∇kzX,:,j), z, xj; kwargs...)
+    end
+    w = ldiv!(KC,kzX)
+    -2*∇kzX*w
+end
+
+function Hpredvar(z, X, KC, k, ∇k!, Hk!; kwargs...)
+    d, n = size(X)
+    kzX = zeros(n)
+    ∇kzX = zeros(d,n)
+    for j = 1:n
+        xj = @view X[:,j]
+        kzX[j] = k(z, xj; kwargs...)
+        ∇k!(view(∇kzX,:,j), z, xj; kwargs...)
+    end
+    w = ldiv!(KC,kzX)
+    ∇kzX_divU = rdiv!(∇kzX, KC.U)
+    H = zeros(d,d)
+    for j = 1:n
+        xj = @view X[:,j]
+        Hk!(H,z,xj,w[j]; kwargs...)
+    end
+    mul!(H, ∇kzX_divU, ∇kzX_divU', -2.0, -2.0)
+end
+```
+
+```{julia}
+let
+    Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y))
+    z = rand(2)
+    dz = rand(2)
+    ℓ = 0.8
+    KC = kernel_cholesky(k_SE, Zk; ℓ=ℓ)
+
+    check_fd(dz'*∇predvar(z, Zk, KC, k_SE, ∇k_SE!; ℓ=ℓ),
+             s->predvar(z+s*dz, Zk, KC, k_SE; ℓ=ℓ), 0.0),
+    check_fd(Hpredvar(z, Zk, KC, k_SE, ∇k_SE!, Hk_SE!; ℓ=ℓ)*dz,
+             s->∇predvar(z+s*dz, Zk, KC, k_SE, ∇k_SE!; ℓ=ℓ), 0.0)
+end
+```
