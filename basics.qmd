@@ -14,7 +14,6 @@ format:
 ```{julia}
 #| echo: false
 using LinearAlgebra
-using Polynomials
 using Plots
 using Random
 ```
@@ -126,7 +125,7 @@ function check_approx(xref, x; rtol=1e-6, atol=0.0)
     abserr = norm(xref-x)
     refnorm = norm(xref)
     if abserr > rtol*refnorm + atol
-        error("Check failed: $abserr > $rtol * $refnorm + $atol")
+        error("Check failed ($x v $xref): $abserr > $rtol * $refnorm + $atol")
     end
     abserr/refnorm
 end
@@ -137,7 +136,7 @@ check_fd(df_ref, f, x; h=1e-6, rtol=1e-6, atol=0.0) =
     check_approx(df_ref, diff_fd(f, x, h=h))
 ```
 
-# Approximation with a kernel
+# Kernel functions
 
 A kernel function is a symmetric positive definite function
 $k : \Omega \times \Omega \rightarrow \mathbb{R}$.  Here positive
@@ -315,52 +314,319 @@ dist(x :: AbstractVector{T}, y :: AbstractVector{T}) where {T} =
     sqrt(dist2(x,y))
 ```
 
-With the distance function in place, we can define kernels based on
-our radial basis functions.
+## Kernel contexts
+
+We define a *kernel context* as "all the stuff you need to work with a
+kernel."  This includes the type of the kernel, the dimension of the
+space, and any hyperparameters.
 
 ```{julia}
-k_SE(x, y; ℓ=1.0) = ϕ_SE(dist(x, y)/ℓ)
-k_M1(x, y; ℓ=1.0) = ϕ_M1(dist(x, y)/ℓ)
-k_M3(x, y; ℓ=1.0) = ϕ_M3(dist(x, y)/ℓ)
-k_M5(x, y; ℓ=1.0) = ϕ_M5(dist(x, y)/ℓ)
-k_IQ(x, y; ℓ=1.0) = ϕ_IQ(dist(x, y)/ℓ)
-k_IM(x, y; ℓ=1.0) = ϕ_IM(dist(x, y)/ℓ)
-k_RQ(x, y; ℓ=1.0, α=1.0) = ϕ_RQ(dist(x, y)/ℓ, α=α)
+abstract type KernelContext end
 ```
 
-Frequently there is also a constant multiplier in front.  We will
-treat this case in the next section when we discuss hyperparameters.
-
-## Hyperparameter organization
-
-We have written hyperparameters in terms of a named tuple in Julia,
-which can be passed into functions as keyword arguments.  However, it
-is also useful to be able to think of a vector of hyperparameters that
-can be optimized.  We will call the conversion of a named tuple into a
-vector *packing* the hyperparameters, and the reverse as *unpacking*.
+All of the kernels we work with are based on radial basis functions,
+and have the form
+$$
+  k(x,y) = \phi(\|x-y\|/\ell)
+$$
+where $\ell$ is a length scale parameter.  There may be other
+hyperparameters as well.  We therefore define an `RBFKernelContext`
+subtype that includes the dimension of the space as a type parameter,
+and define a getter function to extract that information.
 
 ```{julia}
-function pack_hypers!(θ :: Vector, named :: NamedTuple)
-    θ[:] .= values(named)
+"""
+For an RBFKernelContext{d}, we should define
+
+ϕ(ctx, s) = RBF evaluation at s
+Dϕ(ctx, s) = RBF derivatives at s
+nhypers(ctx) = Number of tuneable hyperparameters
+getθ!(θ, ctx) = Extract the hyperparameters into a vector
+updateθ(ctx, θ) = Create a new context with updated hyperparameters
+
+We also have the predefined ndims function to extract {d}.
+"""
+abstract type RBFKernelContext{d} <: KernelContext end
+
+ndims(::RBFKernelContext{d}) where {d} = d
+
+function getθ(ctx :: KernelContext)
+    θ = zeros(nhypers(ctx))
+    getθ!(θ, ctx)
     θ
 end
-
-pack_hypers!(θ :: Vector; kwargs...) = pack_hypers!(θ, kwargs)
-pack_hypers(named :: NamedTuple) = pack_hypers!(zeros(length(named)), named)
-pack_hypers(; kwargs...) = pack_hypers(kwargs)
-unpack_hypers(keys, θ) = NamedTuple{keys}(θ)
 ```
 
-A demonstration is always useful.
+## Simple RBF kernels
+
+In most cases, the only hyperparameter we will track in the type is
+the length scale hyperparameter.  For these subtypes of
+`RBFKernelContext`, we have a fairly boilerplate structure and method
+definition that we encode in a macro.
+
+```{julia}
+macro rbf_simple_kernel(T, ϕ_rbf, Dϕ_rbf)
+    T, ϕ_rbf, Dϕ_rbf= esc(T), esc(ϕ_rbf), esc(Dϕ_rbf)
+    quote
+        struct $T{d} <: $(esc(:RBFKernelContext)){d}
+            ℓ :: Float64
+        end
+        $(esc(:ϕ))(::$T, s) = $ϕ_rbf(s)
+        $(esc(:Dϕ))(::$T, s) = $Dϕ_rbf(s)
+        $(esc(:nhypers))(::$T) = 1
+        $(esc(:getθ!))(θ, ctx :: $T) = θ[1]=ctx.ℓ
+        $(esc(:updateθ))(ctx :: $T{d}, θ) where {d} = $T{d}(θ[1])
+    end
+end
+
+@rbf_simple_kernel(KernelSE, ϕ_SE, Dϕ_SE)
+@rbf_simple_kernel(KernelM1, ϕ_M1, Dϕ_M1)
+@rbf_simple_kernel(KernelM3, ϕ_M3, Dϕ_M3)
+@rbf_simple_kernel(KernelM5, ϕ_M5, Dϕ_M5)
+@rbf_simple_kernel(KernelIQ, ϕ_IQ, Dϕ_IQ)
+@rbf_simple_kernel(KernelIM, ϕ_IM, Dϕ_IM)
+```
+
+## Kernel operations
+
+One of the reasons for defining a kernel context is that it allows us
+to have a generic high-performance interface for kernel operations.
+The most fundammental operation, of course, is evaluating the kernel
+on a pair of points.
+
+```{julia}
+kernel(ctx :: RBFKernelContext, x :: AbstractVector, y :: AbstractVector) =
+    ϕ(ctx, dist(x, y)/ctx.ℓ)
+```
+
+The interface for computing derivatives will involve two functions:
+one for computing the gradient with respect to the hypers, the other
+for computing the Hessian.  In the case of radial basis functions
+where the only intrinsic hyperparameter is the length scale,
+we have
+$$\begin{aligned}
+\nabla_\theta k(x,y) &=
+    \begin{bmatrix} -\phi'(s) s/\ell \end{bmatrix} \\
+H_{\theta} k(x,y) &=
+    \begin{bmatrix} (\phi''(s) s + 2 \phi'(s)) s / \ell^2 \end{bmatrix}
+\end{aligned}$$
+This gives us the following generic code:
+```{julia}
+function ∇θ_kernel!(g :: AbstractVector, ctx :: RBFKernelContext,
+                    x :: AbstractVector, y :: AbstractVector, c=1.0)
+    ℓ = ctx.ℓ
+    s = dist(x,y)/ℓ
+    _, _, dϕ, _ = Dϕ(ctx, s)
+    g[1] -= c*dϕ*s/ℓ
+    g
+end
+
+function Hθ_kernel!(H :: AbstractMatrix, ctx :: RBFKernelContext,
+                    x :: AbstractVector, y :: AbstractVector, c=1.0)
+    ℓ = ctx.ℓ
+    s = dist(x,y)/ℓ
+    _, _, dϕ, Hϕ = Dϕ(ctx, s)
+    H[1,1] += c*(Hϕ*s + 2*dϕ)*s/ℓ^2
+    H
+end
+```
+
+For spatial derivatives of kernels based on radial basis functions, it is
+useful to write $r = x-y$ and $\rho = \|r\|$, and to write the
+derivative formulae in terms of $r$ and $\rho$.  Using $f_{,i}$ to
+denote the $i$th partial derivative of a function $f$, we have first
+derivatives
+$$
+  [\phi(\rho)]_{,i} = \phi'(\rho) \rho_{,i}
+$$
+and second derivatives
+$$
+  [\phi(\rho)]_{,ij} = \phi''(\rho) \rho_{,i} \rho_{,j} + \phi'(\rho) \rho_{,ij}
+$$
+The derivatives of $\rho = \|r\|$ are given by
+$$
+  \rho_{,i} = \rho^{-1} r_i = u_i
+$$
+and
+$$
+  \rho_{,ij} = \rho^{-1} \left( \delta_{ij} - u_i u_j \right)
+$$
+where $u = r/\rho$ is the unit length vector in the $r$ direction.
+Putting these calculations together, we have
+$$
+  \nabla \phi = \phi'(\rho) u
+$$
+and
+$$
+  H_{\phi} =
+  \frac{\phi'(\rho)}{\rho} I +
+  \left( \phi''(\rho) - \frac{\phi'(\rho)}{\rho} \right) uu^T
+$$
+This gives us the following generic code.
+
+```{julia}
+function ∇x_kernel!(g :: AbstractVector, ctx :: RBFKernelContext,
+                    x :: AbstractVector, y :: AbstractVector, c=1.0)
+    ℓ = ctx.ℓ
+    d = ndims(ctx)
+    ρ = dist(x,y)
+    s = ρ/ℓ
+    _, _, dϕ, _ = Dϕ(ctx, s)
+    if ρ != 0.0
+        dϕ /= ctx.ℓ
+        C = c*dϕ/ρ
+        for i = 1:d
+            g[i] += C*(x[i]-y[i])
+        end
+    end
+    g
+end
+
+function Hx_kernel!(H :: AbstractMatrix, ctx :: RBFKernelContext,
+                    x :: AbstractVector, y :: AbstractVector, c=1.0)
+    ℓ = ctx.ℓ
+    d = ndims(ctx)
+    ρ = dist(x,y)
+    s = ρ/ℓ
+    _, dϕ_div, _, Hϕ = Dϕ(ctx, s)
+    Hϕ /= ℓ^2
+    dϕ_div /= ℓ^2
+    for j = 1:d
+        H[j,j] += c*dϕ_div
+    end
+    if ρ != 0.0
+        C = c*(Hϕ-dϕ_div)/ρ^2
+        for j = 1:d
+            xj, yj = x[j], y[j]
+            for i = 1:d
+                xi, yi = x[i], y[i]
+                H[i,j] += C*(xj-yj)*(xi-yi)
+            end
+        end
+    end
+    H
+end
+```
+
+## RQ kernel
+
+The rational quadratic case is a little more complicated, with two
+adjustable hyperparameters (the length scale $\ell$ and the exponent $\alpha$).
+
+```{julia}
+struct KernelRQ{d} <: RBFKernelContext{d}
+    ℓ :: Float64
+    α :: Float64
+end
+
+ϕ(ctx :: KernelRQ, s) = ϕ_RQ(s; α=ctx.α)
+Dϕ(ctx :: KernelRQ, s) = Dϕ_RQ(s; α=ctx.α)
+
+nhypers(:: KernelRQ) = 2
+function getθ!(θ, ctx :: KernelRQ)
+    θ[1] = ℓ
+    θ[2] = α
+end
+updateθ(ctx :: KernelRQ{d}, θ) where {d} = KernelRQ{d}(θ[1], θ[2])
+```
+
+Here we also want to compute the gradients and Hessians with respect
+to both $\ell$ and $\alpha$.
+
+```{julia}
+function ∇θ_kernel!(g :: AbstractVector, ctx :: KernelRQ,
+                    x :: AbstractVector, y :: AbstractVector, c=1.0)
+    ℓ, α = ctx.ℓ, ctx.α
+    s  = dist(x,y)/ℓ
+    s2 = s^2
+    z  = 1.0 + s2
+    ϕ     = z^-α
+    gℓ    = 2*α*ϕ/z * s2/ℓ
+    gα    = -ϕ * log(z)
+    g[1] += c*gℓ
+    g[2] += c*gα
+    g
+end
+
+function Hθ_kernel!(H :: AbstractMatrix, ctx :: KernelRQ,
+                    x :: AbstractVector, y :: AbstractVector, c=1.0)
+    ℓ, α = ctx.ℓ, ctx.α
+    s  = dist(x,y)/ℓ
+    s2 = s^2
+    z  = 1.0 + s2
+    logz  = log(z)
+    ϕ     = z^-α
+    Hℓℓ   = 2*ϕ/z*α*s^2/ℓ*( 2*(α+1)/z*s^2/ℓ - 3/ℓ )
+    Hℓα   = 2*ϕ/z*(1-α*logz) * s2/ℓ
+    Hαα   = ϕ * logz^2
+    H[1,1] += c*Hℓℓ
+    H[1,2] += c*Hℓα
+    H[2,1] += c*Hℓα
+    H[2,2] += c*Hαα
+    H
+end
+```
+
+## Convenience functions
+
+While it is a little more efficient to use a mutating function to
+compute kernel gradients and Hessians, it is also convenient to have a
+version available to allocate an outupt vector or matrix.  We note
+that these convenience functions do not need to be specialized for the
+rational quadratic case.
+```{julia}
+∇θ_kernel(ctx :: RBFKernelContext, 
+          x :: AbstractVector, y :: AbstractVector) =
+              ∇θ_kernel!(zeros(nhypers(ctx)), ctx, x, y)
+
+Hθ_kernel(ctx :: RBFKernelContext, 
+          x :: AbstractVector, y :: AbstractVector) =
+              Hθ_kernel!(zeros(nhypers(ctx), nhypers(ctx)), ctx, x, y)
+
+∇x_kernel(ctx :: RBFKernelContext{d},
+          x :: AbstractVector, y :: AbstractVector) where {d} =
+              ∇x_kernel!(zeros(d), ctx, x, y)
+
+Hx_kernel(ctx :: RBFKernelContext{d},
+          x :: AbstractVector, y :: AbstractVector) where {d} =
+              Hx_kernel!(zeros(d,d), ctx, x, y)
+```
+
+## Testing
 
 ```{julia}
 let
-    named = (ℓ=1.0, α=2.0)
-    θ = pack_hypers(named)
-    println(θ)
-    println(unpack_hypers((:ℓ, :α), θ))
+    x, y = [0.1; 0.2], [0.8; 0.8]
+    ℓ = 0.2+rand()
+    check_fd(∇θ_kernel(KernelSE{2}(ℓ),x,y)[1],
+             s->kernel(KernelSE{2}(ℓ+s),x,y), 0.0),
+    check_fd(Hθ_kernel(KernelSE{2}(ℓ),x,y)[1,1],
+             s->∇θ_kernel(KernelSE{2}(ℓ+s),x,y)[1], 0.0)
 end
 ```
+
+```{julia}
+let
+    x, y = [0.1; 0.2], [0.8; 0.8]
+    ℓ, α = 0.2+rand(), rand()
+    k(ℓ,α) = KernelRQ{2}(ℓ,α)
+    check_fd(∇θ_kernel(k(ℓ,α),x,y)[1], s->kernel(k(ℓ+s,α),x,y), 0.0),
+    check_fd(∇θ_kernel(k(ℓ,α),x,y)[2], s->kernel(k(ℓ,α+s),x,y), 0.0),
+    check_fd(Hθ_kernel(k(ℓ,α),x,y)[:,1], s->∇θ_kernel(k(ℓ+s,α),x,y), 0.0),
+    check_fd(Hθ_kernel(k(ℓ,α),x,y)[:,2], s->∇θ_kernel(k(ℓ,α+s),x,y), 0.0)
+end
+```
+
+```{julia}
+let
+    x, y, dx = [0.1; 0.2], [0.8; 0.8], rand(2)
+    ctx = KernelM5{2}(0.5)
+    check_fd(∇x_kernel(ctx,x,y)'*dx, s->kernel(ctx,x+s*dx,y), 0.0),
+    check_fd(Hx_kernel(ctx,x,y)*dx, s->∇x_kernel(ctx,x+s*dx,y), 0.0)
+end
+```
+
+# Working with kernel matrices
 
 ## Kernel evaluation organization
 
@@ -368,10 +634,10 @@ Now we would like code to compute kernel matrices $K_{XY}$ (and
 vectors of kernel evaluations $k_{Xz}$).  Julia allows us to do this
 concisely using *comprehensions*:
 ```{julia}
-kernel_matrix0(kfun, X :: AbstractMatrix, Y :: AbstractMatrix; kwargs...) =
-    [kfun(x,y; kwargs...) for x in eachcol(X), y in eachcol(Y)]
-kernel_vector0(kfun, X :: AbstractMatrix, z :: AbstractVector; kwargs...) =
-    [kfun(x,z; kwargs...) for x in eachcol(X)]
+kernel_matrix0(ctx :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
+    [kernel(ctx,x,y) for x in eachcol(X), y in eachcol(Y)]
+kernel_vector0(ctx :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
+    [kernel(ctx,x,z) for x in eachcol(X)]
 ```
 We use the *splatting* operation to pass the keyword
 arguments through to the invocation of the kernel functions.  This
@@ -384,14 +650,14 @@ storage, if storage has already been allocated.  Second, we want to
 exploit symmetry when computing $K_{XX}$.  Hence, we will put together
 a few helper functions for these tasks:
 ```{julia}
-function kernel_matrix!(KXX :: AbstractMatrix, kfun,
-                        X :: AbstractMatrix; kwargs...)
+function kernel_matrix!(KXX :: AbstractMatrix, ctx :: KernelContext,
+                        X :: AbstractMatrix)
     for j = 1:size(X,2)
         xj = @view X[:,j]
-        KXX[j,j] = kfun(xj, xj; kwargs...)
+        KXX[j,j] = kernel(ctx, xj, xj)
         for i = 1:j-1
             xi = @view X[:,i]
-            kij = kfun(xi, xj; kwargs...)
+            kij = kernel(ctx, xi, xj)
             KXX[i,j] = kij
             KXX[j,i] = kij
         end
@@ -399,51 +665,51 @@ function kernel_matrix!(KXX :: AbstractMatrix, kfun,
     KXX
 end
 
-function kernel_vector!(KXz :: AbstractVector, kfun,
+function kernel_vector!(KXz :: AbstractVector, ctx :: KernelContext,
                         X :: AbstractMatrix,
-                        z :: AbstractVector; kwargs...)
+                        z :: AbstractVector)
     for i = 1:size(X,2)
         xi = @view X[:,i]
-        KXz[i] = kfun(xi, z; kwargs...)
+        KXz[i] = kernel(ctx, xi, z)
     end
     KXz
 end
 
-function kernel_matrix!(KXY :: AbstractMatrix, kfun,
+function kernel_matrix!(KXY :: AbstractMatrix, ctx :: KernelContext,
                         X :: AbstractMatrix,
-                        Y :: AbstractMatrix; kwargs...)
+                        Y :: AbstractMatrix)
     for j = 1:size(Y,2)
         yj = @view Y[:,j]
         for i = 1:size(X,2)
             xi = @view X[:,i]
-            KXY[i,j] = kfun(xi, yj; kwargs...)
+            KXY[i,j] = kernel(ctx, xi, yj)
         end
     end
     KXY
 end
 
-kernel_matrix(kfun, X :: AbstractMatrix; kwargs...) =
-    kernel_matrix!(zeros(size(X,2), size(X,2)), kfun, X; kwargs...)
+kernel_matrix(ctx :: KernelContext, X :: AbstractMatrix) =
+    kernel_matrix!(zeros(size(X,2), size(X,2)), ctx, X)
 
-kernel_vector(kfun, X :: AbstractMatrix, z :: AbstractVector; kwargs...) =
-    kernel_vector!(zeros(size(X,2)), kfun, X, z; kwargs...)
+kernel_vector(ctx :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
+    kernel_vector!(zeros(size(X,2)), ctx, X, z)
 
-kernel_matrix(kfun, X :: AbstractMatrix, Y :: AbstractMatrix; kwargs...) =
-    kernel_matrix!(zeros(size(X,2), size(Y,2)), kfun, X, Y; kwargs...)
+kernel_matrix(ctx :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
+    kernel_matrix!(zeros(size(X,2), size(Y,2)), ctx, X, Y)
 ```
 
 Sometimes, we want to incorporate a shift in the kernel matrix
 construction as well.
 ```{julia}
-function kernel_matrix!(KXX :: AbstractMatrix, kfun,
+function kernel_matrix!(KXX :: AbstractMatrix, ctx :: KernelContext,
                         X :: AbstractMatrix,
                         s :: Real; kwargs...)
     for j = 1:size(X,2)
         xj = @view X[:,j]
-        KXX[j,j] = kfun(xj, xj; kwargs...) + s
+        KXX[j,j] = kernel(ctx, xj, xj) + s
         for i = 1:j-1
             xi = @view X[:,i]
-            kij = kfun(xi, xj; kwargs...)
+            kij = kernel(ctx, xi, xj)
             KXX[i,j] = kij
             KXX[j,i] = kij
         end
@@ -451,8 +717,8 @@ function kernel_matrix!(KXX :: AbstractMatrix, kfun,
     KXX
 end
 
-kernel_matrix(kfun, X :: AbstractMatrix, s :: Real; kwargs...) =
-    kernel_matrix!(zeros(size(X,2), size(X,2)), kfun, X, s; kwargs...)
+kernel_matrix(ctx :: KernelContext, X :: AbstractMatrix, s :: Real) =
+    kernel_matrix!(zeros(size(X,2), size(X,2)), ctx, X, s)
 ```
 
 
@@ -461,11 +727,12 @@ correctly, or at least that there is internal consistency between the versions:
 ```{julia}
 let
     Zk = kronecker_quasirand(2,10)
-    KXX1 = kernel_matrix0(k_SE, Zk, Zk)
-    KXX2 = kernel_matrix(k_SE, Zk)
-    KXX3 = kernel_matrix(k_SE, Zk, Zk)
-    KXz1 = kernel_vector0(k_SE, Zk, Zk[:,1])
-    KXz2 = kernel_vector(k_SE, Zk, Zk[:,1])
+    ctx = KernelSE{2}(1.0)
+    KXX1 = kernel_matrix0(ctx, Zk, Zk)
+    KXX2 = kernel_matrix(ctx, Zk)
+    KXX3 = kernel_matrix(ctx, Zk, Zk)
+    KXz1 = kernel_vector0(ctx, Zk, Zk[:,1])
+    KXz2 = kernel_vector(ctx, Zk, Zk[:,1])
 
     norm(KXX1-KXX2)/norm(KXX1),
     norm(KXX1-KXX3)/norm(KXX1),
@@ -482,17 +749,44 @@ with storage.
 ```{julia}
 let
     Zk = kronecker_quasirand(2,10)
+    ctx = KernelSE{2}(1.0)    
     Ktemp = zeros(10,10)
     Kvtemp = zeros(10)
     Zk1 = Zk[:,1]
-    KXX1 = @time kernel_matrix0(k_SE, Zk, Zk)
-    KXz1 = @time kernel_vector0(k_SE, Zk, Zk1)
-    KXX2 = @time kernel_matrix!(Ktemp, k_SE, Zk)
-    KXX3 = @time kernel_matrix!(Ktemp, k_SE, Zk, Zk)
-    KXz2 = @time kernel_vector!(Kvtemp, k_SE, Zk, Zk1)
+    KXX1 = @time kernel_matrix0(ctx, Zk, Zk)
+    KXz1 = @time kernel_vector0(ctx, Zk, Zk1)
+    KXX2 = @time kernel_matrix!(Ktemp, ctx, Zk)
+    KXX3 = @time kernel_matrix!(Ktemp, ctx, Zk, Zk)
+    KXz2 = @time kernel_vector!(Kvtemp, ctx, Zk, Zk1)
     nothing
 end
 ```
+
+We will also later want the first derivatives with respect to hyperparameters
+packed into a set of $n$-by-$n$ matrices:
+```{julia}
+function dθ_kernel_matrix!(δKs :: AbstractArray, ctx :: KernelContext,
+                           X :: AbstractMatrix)
+    n, n, d = size(δKs)
+    for j = 1:n
+        xj = @view X[:,j]
+        δKjj = @view δKs[j,j,:]
+        ∇θ_kernel!(δKjj, ctx, xj, xj)
+        for i = j+1:n
+            xi = @view X[:,i]
+            δKij = @view δKs[i,j,:]
+            δKji = @view δKs[j,i,:]
+            ∇θ_kernel!(δKij, ctx, xi, xj)
+            δKji[:] .= δKij
+        end
+    end
+    δKs    
+end
+
+dθ_kernel_matrix(ctx :: KernelContext, X :: AbstractMatrix) =
+    dθ_kernel_matrix!(zeros(size(X,2), size(X,2), nhypers(ctx)), ctx, X)
+```
+
 
 ## Covariances and Cholesky factors
 
@@ -613,17 +907,19 @@ We are frequently going to want the Cholesky factorization of the
 kernel matrix much more than the kernel matrix itself.  We will
 therefore write some convenience functions for this.
 ```{julia}
-kernel_cholesky!(KXX :: AbstractMatrix, kfun, X :: AbstractMatrix; kwargs...) =
-    cholesky!(kernel_matrix!(KXX, kfun, X; kwargs...))
+kernel_cholesky!(KXX :: AbstractMatrix, ctx :: KernelContext,
+                 X :: AbstractMatrix) =
+    cholesky!(kernel_matrix!(KXX, ctx, X))
 
-kernel_cholesky(kfun, X :: AbstractMatrix; kwargs...) =
-    cholesky!(kernel_matrix(kfun, X; kwargs...))
+kernel_cholesky(ctx :: KernelContext, X :: AbstractMatrix) =
+    cholesky!(kernel_matrix(ctx, X))
 
-kernel_cholesky!(KXX :: AbstractMatrix, kfun, X :: AbstractMatrix, s :: Real; kwargs...) =
-    cholesky!(kernel_matrix!(KXX, kfun, X, s; kwargs...))
+kernel_cholesky!(KXX :: AbstractMatrix, ctx :: KernelContext,
+                 X :: AbstractMatrix, s :: Real) =
+    cholesky!(kernel_matrix!(KXX, ctx, X, s))
 
-kernel_cholesky(kfun, X :: AbstractMatrix, s :: Real; kwargs...) =
-    cholesky!(kernel_matrix(kfun, X, s; kwargs...))
+kernel_cholesky(ctx :: KernelContext, X :: AbstractMatrix, s :: Real) =
+    cholesky!(kernel_matrix(ctx, X, s))
 ```
 
 It is also useful to have a convenience function for evaluating a
@@ -653,12 +949,12 @@ Cholesky factor ($r_{Xz} = L_{XX}^{-1} k_{Xz}$).  Therefore we will
 use the overwriting version of the triangular solver.
 
 ```{julia}
-function eval_GP(KC :: Cholesky, kfun, X :: AbstractMatrix,
-                 c :: AbstractVector, z :: AbstractVector; kwargs...)
-    kXz = kernel_vector(kfun, X, z; kwargs...)
+function eval_GP(KC :: Cholesky, ctx :: KernelContext, X :: AbstractMatrix,
+                 c :: AbstractVector, z :: AbstractVector)
+    kXz = kernel_vector(ctx, X, z)
     μz  = dot(kXz, c)
     rXz = ldiv!(KC.L, kXz)
-    σz  = sqrt(kfun(z,z; kwargs...)-rXz'*rXz)
+    σz  = sqrt(kernel(ctx,z,z)-rXz'*rXz)
     μz, σz
 end
 ```
@@ -670,15 +966,16 @@ let
     # Set up sample points and test function
     testf(x,y) = x^2 + y
     Zk, y = test_setup2d(testf)
+    ctx = KernelSE{2}(1.0)
 
     # Form kernel Cholesky and weights
-    KC = kernel_cholesky(k_SE, Zk)
+    KC = kernel_cholesky(ctx, Zk)
     c = KC\y
 
     # Evaluate true function and GP at a test point
     z = [0.456; 0.456]
     fz = testf(z...)
-    μz, σz = eval_GP(KC, k_SE, Zk, c, z)
+    μz, σz = eval_GP(KC, ctx, Zk, c, z)
 
     # Compare GP to true function
     zscore = (fz-μz)/σz
@@ -728,25 +1025,26 @@ points.
 ```{julia}
 let
     Zk = kronecker_quasirand(2,10)
+    ctx = KernelSE{2}(1.0)
     z = [0.456; 0.456]
     w = randn(10)
 
     # Pre-allocate storage, form K, and Cholesky factor in place.
     Kstorage = zeros(11,11)
     K11 = @view Kstorage[1:10,1:10]
-    KC = kernel_cholesky!(K11, k_SE, Zk)
+    KC = kernel_cholesky!(K11, ctx, Zk)
 
     # Add a column of K to the matrix
     K12 = @view Kstorage[1:10,11]
-    kernel_vector!(K12, k_SE, Zk, z)
-    Kstorage[11,11] = k_SE(z, z)
+    kernel_vector!(K12, ctx, Zk, z)
+    Kstorage[11,11] = kernel(ctx, z, z)
 
     # Extend the Cholesky factorization
     Kfac = extend_cholesky!(Kstorage, 10, 11)
 
     # Compare to the earlier approach
     c = zeros(10)
-    μz, σz = eval_GP(KC, k_SE, Zk, c, z)
+    μz, σz = eval_GP(KC, ctx, Zk, c, z)
 
     # Relative error in computed stddev
     abs( (σz-Kstorage[11,11])/σz )
@@ -796,7 +1094,7 @@ Hence, if the noise variance is treated as a tunable hyperparameter,
 we usually work with $\log \eta$ rather than with $\eta$, and tune
 subject to upper and lower bounds on $\log \eta$.
 
-# Choosing kernel hyperparameters
+# Hyperparameter tuning
 
 Kernel hyperparameters are things like the diagonal variance, length
 scale, and noise variance.  When we don't have a good prior guess for
@@ -959,94 +1257,6 @@ let
 end
 ```
 
-### Differentiating the kernel
-
-To differentiate the negative log likelihood with respect to
-hyperparameters, we need to differentiate the kernel evaluations with
-respect to hyperparameters.  We treat the diagonal variance and the
-noise variance hyperparameters as special cases, which means that for
-most of the kernels considered here, we will only really worry about
-derivatives with respect to length scale.
-
-The interface for computing derivatives will involve two functions:
-one for computing the gradient with respect to the hypers, the other
-for computing the Hessian.  In the case of radial basis functions
-where the only intrinsic hyperparameter is the length scale,
-we have
-$$\begin{aligned}
-\nabla_\theta k(x,y) &=
-    \begin{bmatrix} -\phi'(s) s/\ell \end{bmatrix} \\
-H_{\theta} k(x,y) &=
-    \begin{bmatrix} (\phi''(s) s + 2 \phi'(s)) s / \ell^2 \end{bmatrix}
-\end{aligned}$$
-
-For this case, it's easy to write a macro to produce the relevant code.
-```{julia}
-"""
-Produce
-  dθ_k!(∇k, x, y; hypers...)
-  Hθ_k!(Hk, x, y; hypers...)
-"""
-
-macro dℓ_rbf(Dϕ)
-    ℓ = esc(:ℓ)
-    :(function(g, x, y, c=1.0; ℓ=1.0)
-          s = dist(x,y)/$ℓ
-          ϕ, dϕ_div, dϕ, Hϕ = $Dϕ(s)
-          g[1] -= c*dϕ*s/$ℓ
-          g
-      end,
-      function(H, x, y, c=1.0; ℓ=1.0)
-          s = dist(x,y)/$ℓ
-          ϕ, dϕ_div, dϕ, Hϕ = $Dϕ(s)
-          H[1,1] += c*(Hϕ*s + 2*dϕ)*s/$ℓ^2
-          H
-      end)
-end
-
-dθ_k_SE!, Hθ_k_SE! = @dℓ_rbf(Dϕ_SE)
-```
-
-We will want to pack the first derivatives with respect to hyperparameters
-into a set of $n$-by-$n$ matrices:
-```{julia}
-function dθ_kernel_matrix!(δKs, dθ_k!, X; kwargs...)
-    n, n, d = size(δKs)
-    for j = 1:n
-        xj = @view X[:,j]
-        δKjj = @view δKs[j,j,:]
-        dθ_k!(δKjj, xj, xj; kwargs...)
-        for i = j+1:n
-            xi = @view X[:,i]
-            δKij = @view δKs[i,j,:]
-            δKji = @view δKs[j,i,:]
-            dθ_k!(δKij, xi, xj; kwargs...)
-            δKji[:] .= δKij
-        end
-    end
-    δKs
-end
-
-dθ_kernel_matrix(dθ_k!, X; kwargs...) =
-    dθ_kernel_matrix!(zeros(size(X,2), size(X,2), length(kwargs)),
-                      dθ_k!, X; kwargs...)
-```
-
-Per usual, a finite difference check is helpful.
-
-```{julia}
-let
-    x = rand(2)
-    y = rand(2)
-    ℓ = 0.89
-    ∂ℓ_k_SE(x, y; ℓ=1.0) = dθ_k_SE!(zeros(1), x, y, ℓ=ℓ)[1]
-    ∂2ℓ_k_SE(x, y; ℓ=1.0) = Hθ_k_SE!(zeros(1,1), x, y, ℓ=ℓ)[1]
-    check_fd(∂ℓ_k_SE(x,y,ℓ=ℓ), ℓ->k_SE(x,y,ℓ=ℓ), ℓ),
-    check_fd(∂2ℓ_k_SE(x,y,ℓ=ℓ), ℓ->∂ℓ_k_SE(x,y,ℓ=ℓ), ℓ)
-end
-```
-
-
 ### Putting it together
 
 Putting together the results of the previous section, we have
@@ -1100,23 +1310,45 @@ materialize the full $\delta K$ matrices.  We can also take advantage
 of symmetry.
 
 ```{julia}
-function ∇θ_nll!(g, dθ_k!, X, invK, c; kwargs...)
+function ∇θ_nll!(g :: AbstractVector, ctx :: KernelContext,
+                 X :: AbstractMatrix,
+                 invK :: AbstractMatrix, c :: AbstractVector)
     d, n = size(X)
     for j = 1:n
         xj = @view X[:,j]
         cj = c[j]
-        dθ_k!(g, xj, xj, (invK[j,j]-cj*cj)/2; kwargs...)
+        ∇θ_kernel!(g, ctx, xj, xj, (invK[j,j]-cj*cj)/2)
         for i = j+1:n
             xi = @view X[:,i]
             ci = c[i]
-            dθ_k!(g, xi, xj, (invK[i,j]-ci*cj); kwargs...)
+            ∇θ_kernel!(g, ctx, xi, xj, (invK[i,j]-ci*cj))
         end
     end
     g
 end
 
-∇θ_nll(dθ_k!, X, invK, c; kwargs...) =
-    ∇θ_nll!(zeros(length(kwargs)), dθ_k!, X, invK, c; kwargs...)
+function Hθ_nll!(H :: AbstractMatrix, ctx :: KernelContext,
+                 X :: AbstractMatrix,
+                 invK :: AbstractMatrix, c :: AbstractVector)
+    d, n = size(X)
+    for j = 1:n
+        xj = @view X[:,j]
+        cj = c[j]
+        Hθ_kernel!(H, ctx, xj, xj, (invK[j,j]-cj*cj)/2)
+        for i = j+1:n
+            xi = @view X[:,i]
+            ci = c[i]
+            Hθ_kernel!(H, ctx, xi, xj, (invK[i,j]-ci*cj))
+        end
+    end
+    H
+end
+
+∇θ_nll(ctx :: KernelContext, X, invK, c) =
+    ∇θ_nll!(zeros(nhypers(ctx)), ctx, X, invK, c)
+
+Hθ_nll(ctx :: KernelContext, X, invK, c) =
+    Hθ_nll!(zeros(nhypers(ctx), nhypers(ctx)), ctx, X, invK, c)
 ```
 
 We treat the hyperparameter associated with the noise variance as a
@@ -1124,14 +1356,14 @@ special case.  If $z = \log \eta$ is the log-scale version of the
 noise variance, we also want to compute the extended gradient with the
 derivative with respect to $z$ at the end.
 ```{julia}
-function ∇θz_nll!(g, dθ_k!, X, invK, c, s=1e-10; kwargs...)
-    ∇θ_nll!(g, dθ_k!, X, invK, c; kwargs...)
-    g[length(kwargs)+1] = (tr(invK) - c'*c)*s/2
+function ∇θz_nll!(g, ctx :: KernelContext, X, invK, c, s=1e-10)
+    ∇θ_nll!(g, ctx, X, invK, c)
+    g[nhypers(ctx)+1] = (tr(invK) - c'*c)*s/2
     g
 end
 
-∇θz_nll(dθ_k!, X, invK, c, s=1e-10; kwargs...) =
-    ∇θz_nll!(zeros(length(kwargs)+1), dθ_k!, X, invK, c, s; kwargs...)
+∇θz_nll(ctx :: KernelContext, X, invK, c, s=1e-10) =
+    ∇θz_nll!(zeros(nhypers(ctx)+1), ctx, X, invK, c, s)
 ```
 
 Per usual, we also do a finite difference check.
@@ -1142,13 +1374,13 @@ let
     z=log(s)
 
     function k_SE_nll(ℓ,z)
-        KC = kernel_cholesky(k_SE, Zk, exp(z); ℓ=ℓ)
+        KC = kernel_cholesky(KernelSE{2}(ℓ), Zk, exp(z))
         nll(KC, KC\y, y)
     end
 
-    KC = kernel_cholesky(k_SE, Zk, s; ℓ=ℓ)
+    KC = kernel_cholesky(KernelSE{2}(ℓ), Zk, s)
     c = KC\y
-    g = ∇θz_nll(dθ_k_SE!, Zk, KC\I, c, s; ℓ=ℓ)
+    g = ∇θz_nll(KernelSE{2}(ℓ), Zk, KC\I, c, s)
 
     check_fd(g[1], ℓ->k_SE_nll(ℓ,z), ℓ),
     check_fd(g[2], z->k_SE_nll(ℓ,z), z)
@@ -1214,12 +1446,13 @@ function mul_slices!(result, As, b)
     result
 end
 
-function Hθ_nll(k, dθ_k!, Hθ_k!, X, y, s=1e-10; kwargs...)
+function Hθ_nll(ctx :: KernelContext,
+                X :: AbstractMatrix, y :: AbstractVector, s=1e-10)
     d, n = size(X)
-    nθ = length(kwargs)
+    nθ = nhypers(ctx)
 
     # Factorization and initial solves
-    KC = kernel_cholesky(k, X, s; kwargs...)
+    KC = kernel_cholesky(ctx, X, s)
     invK = KC\I
     c̃ = KC.L\y
     c = KC.U\c̃
@@ -1232,12 +1465,12 @@ function Hθ_nll(k, dθ_k!, Hθ_k!, X, y, s=1e-10; kwargs...)
     H = zeros(nθ+1,nθ+1)
 
     # Add Hessian contribution from kernel second derivatives
-    ∇θ_nll!(H, Hθ_k!, X, invK, c; kwargs...)
+    Hθ_nll!(H, ctx, X, invK, c)
     H[nθ+1,nθ+1] = ∂z_nll
 
     # Set up whitened matrices δK̃ and products δK*c and δK̃*c̃
     δKs = zeros(n, n, nθ+1)
-    dθ_kernel_matrix!(δKs, dθ_k!, X; kwargs...)
+    dθ_kernel_matrix!(δKs, ctx, X)
     for j=1:n  δKs[j,j,nθ+1] = s  end
     δK̃s = whiten_matrices!(δKs, KC)
     δK̃c̃s = mul_slices!(zeros(n,nθ+1), δK̃s, c̃)
@@ -1266,7 +1499,7 @@ let
     s, ℓ = 1e-3, 0.89
     z = log(s)
 
-    testf(ℓ,z) = Hθ_nll(k_SE, dθ_k_SE!, Hθ_k_SE!, Zk, y, exp(z); ℓ=ℓ)
+    testf(ℓ,z) = Hθ_nll(KernelSE{2}(ℓ), Zk, y, exp(z))
     ϕref, gref, Href = testf(ℓ, z)
 
     max(check_fd(gref[1], ℓ->testf(ℓ,z)[1][1], ℓ),
@@ -1378,9 +1611,10 @@ end
 
 let
     Zk, y = test_setup2d((x,y) -> x^2 + y)
+    ctx = KernelSE{2}(1.0)
 
     # Form kernel Cholesky and weights
-    K̄C = kernel_cholesky(k_SE, Zk)
+    K̄C = kernel_cholesky(ctx, Zk)
     c̄ = K̄C\y
     Copt = (c̄'*y)/10
 
@@ -1446,33 +1680,33 @@ As before, our code has slightly special treatment for the case where
 we also want derivatives with respect to $z = \log \eta$.
 
 ```{julia}
-function ∇θ_nllr!(g, dθ_k!, X, invK, c, Copt; kwargs...)
+function ∇θ_nllr!(g, ctx :: KernelContext, X, invK, c, Copt)
     d, n = size(X)
     for j = 1:n
         xj = @view X[:,j]
         cj = c[j]
         cj_div_Copt = cj/Copt
-        dθ_k!(g, xj, xj, (invK[j,j]-cj*cj_div_Copt)/2; kwargs...)
+        ∇θ_kernel!(g, ctx, xj, xj, (invK[j,j]-cj*cj_div_Copt)/2)
         for i = j+1:n
             xi = @view X[:,i]
             ci = c[i]
-            dθ_k!(g, xi, xj, (invK[i,j]-ci*cj_div_Copt); kwargs...)
+            ∇θ_kernel!(g, ctx, xi, xj, (invK[i,j]-ci*cj_div_Copt))
         end
     end
     g
 end
 
-function ∇θz_nllr!(g, dθ_k!, X, invK, c, Copt, s=1e-10; kwargs...)
-    ∇θ_nllr!(g, dθ_k!, X, invK, c, Copt; kwargs...)
-    g[length(kwargs)+1] = (tr(invK) - c'*c/Copt)*s/2
+function ∇θz_nllr!(g, ctx :: KernelContext, X, invK, c, Copt, s=1e-10)
+    ∇θ_nllr!(g, ctx, X, invK, c, Copt)
+    g[nhypers(ctx)+1] = (tr(invK) - c'*c/Copt)*s/2
     g
 end
 
-∇θ_nllr(dθ_k!, X, invK, c, Copt; kwargs...) =
-    ∇θ_nllr!(zeros(length(kwargs)), dθ_k!, X, invK, c, Copt, s; kwargs...)
+∇θ_nllr(ctx :: KernelContext, X, invK, c, Copt) =
+    ∇θ_nllr!(zeros(nhypers(ctx)), ctx, X, invK, c, Copt, s)
 
-∇θz_nllr(dθ_k!, X, invK, c, Copt, s=1e-10; kwargs...) =
-    ∇θz_nllr!(zeros(length(kwargs)+1), dθ_k!, X, invK, c, Copt, s; kwargs...)
+∇θz_nllr(ctx :: KernelContext, X, invK, c, Copt, s=1e-10) =
+    ∇θz_nllr!(zeros(nhypers(ctx)+1), ctx, X, invK, c, Copt, s)
 ```
 
 And our finite difference check:
@@ -1484,14 +1718,15 @@ let
     z=log(s)
 
     function k_SE_nllr(ℓ,z)
-        KC = kernel_cholesky(k_SE, Zk, exp(z); ℓ=ℓ)
+        KC = kernel_cholesky(KernelSE{2}(ℓ), Zk, exp(z))
         nllr(KC, KC\y, y)
     end
 
-    KC = kernel_cholesky(k_SE, Zk, s; ℓ=ℓ)
+    ctx = KernelSE{2}(ℓ)
+    KC = kernel_cholesky(ctx, Zk, s)
     c = KC\y
     Copt = (c'*y)/length(c)
-    g = ∇θz_nllr(dθ_k_SE!, Zk, KC\I, c, Copt, s; ℓ=ℓ)
+    g = ∇θz_nllr(ctx, Zk, KC\I, c, Copt, s)
 
     check_fd(g[1], ℓ->k_SE_nllr(ℓ,z), ℓ),
     check_fd(g[2], z->k_SE_nllr(ℓ,z), z)
@@ -1546,12 +1781,12 @@ a small tweak to deal with the case where we don't care about the
 derivatives with respect to $z = \log(\eta)$.
 
 ```{julia}
-function Hθ_nllr(k, dθ_k!, Hθ_k!, X, y, s=1e-10; withz=true, kwargs...)
+function Hθ_nllr(ctx :: KernelContext, X, y, s=1e-10; withz=true)
     d, n = size(X)
-    nθ = length(kwargs)
+    nθ = nhypers(ctx)
 
     # Factorization and initial solves
-    KC = kernel_cholesky(k, X, s; kwargs...)
+    KC = kernel_cholesky(ctx, X, s)
     invK = KC\I
     c̃ = KC.L\y
     c = KC.U\c̃
@@ -1566,14 +1801,24 @@ function Hθ_nllr(k, dθ_k!, Hθ_k!, X, y, s=1e-10; withz=true, kwargs...)
     H = zeros(nt,nt)
 
     # Add Hessian contribution from kernel second derivatives
-    ∇θ_nllr!(H, Hθ_k!, X, invK, c, Copt; kwargs...)
+    for j = 1:n
+        xj = @view X[:,j]
+        cj = c[j]
+        cj_div_Copt = cj/Copt
+        Hθ_kernel!(H, ctx, xj, xj, (invK[j,j]-cj*cj_div_Copt)/2)
+        for i = j+1:n
+            xi = @view X[:,i]
+            ci = c[i]
+            Hθ_kernel!(H, ctx, xi, xj, (invK[i,j]-ci*cj_div_Copt))
+        end
+    end
     if withz
         H[nt,nt] = ∂z_nllr
     end
 
     # Set up matrices δK
     δKs = zeros(n, n, nt)
-    dθ_kernel_matrix!(δKs, dθ_k!, X; kwargs...)
+    dθ_kernel_matrix!(δKs, ctx, X)
     if withz
         for j=1:n
             δKs[j,j,nt] = s
@@ -1616,7 +1861,7 @@ let
     s, ℓ = 1e-3, 0.89
     z = log(s)
 
-    testf(ℓ,z) = Hθ_nllr(k_SE, dθ_k_SE!, Hθ_k_SE!, Zk, y, exp(z); ℓ=ℓ)
+    testf(ℓ,z) = Hθ_nllr(KernelSE{2}(ℓ), Zk, y, exp(z))
     ϕref, gref, Href = testf(ℓ, z)
 
     max(check_fd(gref[1], ℓ->testf(ℓ,z)[1][1], ℓ),
@@ -1650,23 +1895,38 @@ we just cut the step if we are changing the noise variance by more
 than a factor of 20 or so.
 
 ```{julia}
+function newton_hypers0(ctx :: KernelContext, η :: Float64,
+                        X :: AbstractMatrix, y :: AbstractVector;
+                        niters = 12, max_dz=3.0,
+                        monitor = (ctx, η, ϕ, ∇ϕ)->nothing)
+    θ = getθ(ctx)
+    for j = 1:niters
+        ϕ, ∇ϕ, Hϕ = Hθ_nllr(ctx, X, y, η)
+        monitor(ctx, η, ϕ, ∇ϕ)
+        u = -Hϕ\∇ϕ
+        if abs(u[end]) > max_dz
+            u *= max_dz/abs(u[2])
+        end
+        θ[:] .+= u[1:end-1]
+        ctx = updateθ(ctx, θ)
+        η *= exp(u[end])
+    end
+    ctx, η
+end
+
 let
     Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y) + 5e-4*cos(100*y), 40)
-    ℓ, s = 0.7, 1e-4
+    ctx, η = KernelSE{2}(0.7), 1e-4
+
     normgs = []
-    for j = 1:12
-        ϕ̄, ∇ϕ̄, Hϕ̄ = Hθ_nllr(k_SE, dθ_k_SE!, Hθ_k_SE!, Zk, y, s; ℓ=ℓ)
-        u = -Hϕ̄\∇ϕ̄
-        cut = " "
-        if abs(u[2]) > 3
-            u /= abs(u[2])
-            cut = "*"
-        end
-        println("$cut ($ℓ,$s)\t$ϕ̄\t$(norm(∇ϕ̄))")
-        push!(normgs, norm(∇ϕ̄))
-        ℓ += u[1]
-        s *= exp(u[2])
+    function monitor(ctx, η, ϕ, ∇ϕ)
+        ℓ = ctx.ℓ
+        println("($ℓ,$η)\t$ϕ\t$(norm(∇ϕ))")
+        push!(normgs, norm(∇ϕ))
     end
+    
+    ctx, η = newton_hypers0(ctx, η, Zk, y, monitor=monitor)
+    println("Finished with ($(ctx.ℓ), $η)")
     plot(normgs, yscale=:log10)
 end
 ```
@@ -1866,10 +2126,11 @@ of the reduced NLL and the version based on tridiagonalization.
 let
     n = 10
     Zk, y = test_setup2d((x,y) -> x^2 + y, n)
+    ctx = KernelSE{2}(1.0)
     η = 1e-3
 
     # Ordinary reduced NLL computation (full and pieces)
-    K = kernel_matrix(k_SE, Zk)
+    K = kernel_matrix(ctx, Zk)
     KC = cholesky(K+η*I)
     c = KC\y
     data1 = c'*y
@@ -1900,8 +2161,9 @@ We will also do a finite difference check on the computed gradient.
 ```{julia}
 let
     Zk, y = test_setup2d((x,y) -> x^2 + y)
+    ctx = KernelSE{2}(1.0)
     η = 1e-3
-    K = kernel_matrix(k_SE, Zk)
+    K = kernel_matrix(ctx, Zk)
     tridiag_reduce!(K, y)
     check_fd(nllrT(K, y, η)[2], η->nllrT(K, y, η)[1], η)
 end
@@ -1968,7 +2230,7 @@ let
     beta = zeros(n)
     c = zeros(n)
     ỹ = copy(y)
-    K = kernel_matrix(k_SE, Zk; ℓ=ℓ)
+    K = kernel_matrix(KernelSE{2}(ℓ), Zk)
     tridiag_reduce!(K, ỹ)
 
     ss = 10.0.^(-10:0.1:-2)
@@ -1998,49 +2260,48 @@ After a few steps of alternating iteration, we can run a few Newton
 steps to polish up the result, if desired.
 
 ```{julia}
-let
-    n = 40
-    Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y) + 1e-3*cos(100*x), n)
+function bcd_hypers(ctx :: KernelContext, η :: Float64,
+                    X :: AbstractMatrix, y :: AbstractVector;
+                    niters = 3)
+    θ = getθ(ctx)
 
-    ℓ=0.5
-    η=1e-10
+    n = size(X,2)
     alpha = zeros(n)
     beta = zeros(n)
     c = zeros(n)
     ỹ = copy(y)
     K = zeros(n,n)
+    
+    for j = 1:niters
 
-    Hθ_SE_nllr(η, ℓ; withz=false) =
-        Hθ_nllr(k_SE, dθ_k_SE!, Hθ_k_SE!, Zk, y, η; withz=withz, ℓ=ℓ)
-
-    println("--- Start with alternating iteration ---")
-    for j = 1:3
-
-        # First adjust the length scale
-        g = [0.0]
-        for k=1:4
-            _, g, H = Hθ_SE_nllr(η,ℓ)
-            u = -(H\g)
-            ℓ += u[1]
+        # Refine length scale
+        for k = 1:4
+            _, g, H = Hθ_nllr(ctx, X, y, η; withz=false)
+            ctx = updateθ(ctx, θ-H\g)
         end
 
-        # Now adjust the noise variance
-        kernel_matrix!(K, k_SE, Zk; ℓ=ℓ)
+        # Optimize η
+        kernel_matrix!(K, ctx, X)
         ỹ[:] .= y
         tridiag_reduce!(K, ỹ)
         η, ϕ, ∂η_ϕ = min_nllrT!(K,ỹ,1e-10,1e-2,alpha,beta,c)
-        println("$ℓ\t$η\t$ϕ\t$g\t$∂η_ϕ")
-
+        
+        println("$(ctx.ℓ)\t$η\t$ϕ")        
     end
+    ctx, η
+end
+
+let
+    n = 40
+    Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y) + 1e-3*cos(100*x), n)
+    ctx, η = KernelSE{2}(0.8), 1e-10
+    println("--- Start with alternating iteration ---")    
+    ctx, η = bcd_hypers(ctx, η, Zk, y, niters=5)
 
     println("--- Clean up with Newton ---")
-    for j = 1:5
-        ϕ, g, H = Hθ_SE_nllr(η,ℓ,withz=true)
-        println("$ℓ\t$η\t$ϕ\t$(norm(g))")
-        u = -H\g
-        ℓ += u[1]
-        η *= exp(u[2])
-    end
+    newton_hypers0(ctx, η, Zk, y, niters=15,
+                   monitor = (ctx, η, ϕ, ∇ϕ)->
+                       println("$(ctx.ℓ)\t$η\t$ϕ\t$(norm(∇ϕ))"))
 end
 ```
 
@@ -2052,117 +2313,6 @@ gradients and Hessians of the pointwise predictive mean and variance.
 This requires computing gradients and Hessians for the kernel, and
 assembling those gradients and Hessians into a coherent whole.
 
-## Radial basis function gradients and Hessians
-
-For derivatives of kernels based on radial basis functions, it is
-useful to write $r = x-y$ and $\rho = \|r\|$, and to write the
-derivative formulae in terms of $r$ and $\rho$.  Using $f_{,i}$ to
-denote the $i$th partial derivative of a function $f$, we have first
-derivatives
-$$
-  [\phi(\rho)]_{,i} = \phi'(\rho) \rho_{,i}
-$$
-and second derivatives
-$$
-  [\phi(\rho)]_{,ij} = \phi''(\rho) \rho_{,i} \rho_{,j} + \phi'(\rho) \rho_{,ij}
-$$
-The derivatives of $\rho = \|r\|$ are given by
-$$
-  \rho_{,i} = \rho^{-1} r_i = u_i
-$$
-and
-$$
-  \rho_{,ij} = \rho^{-1} \left( \delta_{ij} - u_i u_j \right)
-$$
-where $u = r/\rho$ is the unit length vector in the $r$ direction.
-Putting these calculations together, we have
-$$
-  \nabla \phi = \phi'(\rho) u
-$$
-and
-$$
-  H_{\phi} =
-  \frac{\phi'(\rho)}{\rho} I +
-  \left( \phi''(\rho) - \frac{\phi'(\rho)}{\rho} \right) uu^T
-$$
-
-These functions are clearly well-behaved away from $r = 0$, but we can
-run into difficulties at $r = 0$.  In particular, in order to have
-differentiability at $\rho = 0$, we need $\phi'(\rho)/\rho$ to
-approach a finite value, and in order to have second derivatives we
-need $\phi'(\rho)/\rho$ to approach $\phi''(0)$.
-
-Note that if $\phi(\rho) = \phi_{\mathrm{ref}}(s)$, with $s = \rho/\ell$, then
-$$\begin{aligned}
- \phi'(\rho) &= \phi_{\mathrm{ref}}'(s) \ell^{-1}, \\
- \phi'(\rho)/\rho &= (\phi_{\mathrm{ref}}'(s)/s)\ell^{-2}, \\
- \phi''(\rho) &= \phi_{\mathrm{ref}}''(s) \ell^{-2}.
-\end{aligned}$$
-
-Because we will frequently accumulate gradients and Hessians, we write
-mutating versions of the computations that add a multiple of a
-gradient or Hessian into an accumulator argument.  Because this code
-looks the same for all of our radially symmetric kernels, we write a
-macro to produce it.
-```{julia}
-macro rbf_derivs(Dϕ)
-    ℓ=esc(:ℓ)
-    :(function(g, x, y, c=1.0; ℓ=1.0, kwargs...)
-          ρ = dist(x,y)
-          s = ρ/$ℓ
-          _, dϕ_div, dϕ, _ = $Dϕ(s; kwargs...)
-          if ρ != 0.0
-              dϕ /= $ℓ
-              C = c*dϕ/ρ
-              for i = 1:length(x)
-                  g[i] += C*(x[i]-y[i])
-              end
-          end
-          g
-      end,
-      function(H, x, y, c=1.0; ℓ=1.0, kwargs...)
-          ρ = dist(x,y)
-          s = ρ/$ℓ
-          _, dϕ_div, _, Hϕ = $Dϕ(s; kwargs...)
-          Hϕ /= $ℓ^2
-          dϕ_div /= $ℓ^2
-          for j = 1:length(x)
-              H[j,j] += c*dϕ_div
-          end
-          if ρ != 0.0
-              C = c*(Hϕ-dϕ_div)/ρ^2
-              for j = 1:length(x)
-                  xj, yj = x[j], y[j]
-                  for i=1:length(x)
-                      xi, yi = x[i], y[i]
-                      H[i,j] += C*(xj-yj)*(xi-yi)
-                  end
-              end
-          end
-          H
-      end)
-end
-
-∇k_SE!, Hk_SE! = @rbf_derivs(Dϕ_SE)
-```
-
-And, per usual, we use a finite difference check to test correctness.
-```{julia}
-let
-    x = rand(2)
-    y = rand(2)
-    dx = rand(2)
-    ℓ=0.8
-
-    ∇k_SE(x, y; ℓ=1.0) = ∇k_SE!(0*x, x, y; ℓ=ℓ)
-    Hk_SE(x, y; ℓ=1.0) = Hk_SE!(zeros(length(x),length(x)), x, y; ℓ=ℓ)
-
-    check_fd(dx'*∇k_SE(x, y; ℓ=ℓ), s->k_SE(x+s*dx,y; ℓ=ℓ), 0.0),
-    check_fd(dx'*Hk_SE(x, x; ℓ=ℓ)*dx,  s->dx'*∇k_SE(x+s*dx,x; ℓ=ℓ), 0.0),
-    check_fd(dx'*Hk_SE(x, y; ℓ=ℓ)*dx,  s->dx'*∇k_SE(x+s*dx,y; ℓ=ℓ), 0.0)
-end
-```
-
 ## Predictive mean
 
 The predictive mean is a linear combination $\sum_j c_j k(z, x_j)$;
@@ -2170,34 +2320,34 @@ differentiating is straightforward because of linearity of differentiation.
 
 ```{julia}
 function interpolant(z, X :: AbstractMatrix,
-                     c :: AbstractVector, k; kwargs...)
+                     c :: AbstractVector, ctx :: KernelContext)
     d, n = size(X)
     sz = 0.0
     for j = 1:n
         xj = @view X[:,j]
-        sz += c[j]*k(z, xj; kwargs...)
+        sz += c[j]*kernel(ctx, z, xj)
     end
     sz
 end
 
 function ∇interpolant(z, X :: AbstractMatrix,
-                      c :: AbstractVector, ∇k!; kwargs...)
+                      c :: AbstractVector, ctx :: KernelContext)
     d, n = size(X)
     ∇sz = zeros(size(z))
     for j = 1:n
         xj = @view X[:,j]
-        ∇k!(∇sz, z, xj, c[j]; kwargs...)
+        ∇x_kernel!(∇sz, ctx, z, xj, c[j])
     end
     ∇sz
 end
 
 function Hinterpolant(z, X :: AbstractMatrix,
-                      c :: AbstractVector, Hk!; kwargs...)
+                      c :: AbstractVector, ctx :: KernelContext)
     d, n = size(X)
     Hsz = zeros(length(z), length(z))
     for j = 1:n
         xj = @view X[:,j]
-        Hk!(Hsz, z, xj, c[j]; kwargs...)
+        Hx_kernel!(Hsz, ctx, z, xj, c[j])
     end
     Hsz
 end
@@ -2209,17 +2359,17 @@ finite difference check.
 ```{julia}
 let
     Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y))
-    z = rand(2)
+    z = [0.47; 0.47]
     dz = rand(2)
-    ℓ = 0.8
+    ctx = KernelSE{2}(0.8)
 
-    KC = kernel_cholesky(k_SE, Zk; ℓ=ℓ)
+    KC = kernel_cholesky(ctx, Zk)
     c = KC\y
 
-    check_fd(dz'*∇interpolant(z, Zk, c, ∇k_SE!; ℓ=ℓ),
-             s->interpolant(z+s*dz, Zk, c, k_SE; ℓ=ℓ), 0.0),
-    check_fd(Hinterpolant(z, Zk, c, Hk_SE!; ℓ=ℓ)*dz,
-             s->∇interpolant(z+s*dz, Zk, c, ∇k_SE!; ℓ=ℓ), 0.0)
+    check_fd(dz'*∇interpolant(z, Zk, c, ctx),
+             s->interpolant(z+s*dz, Zk, c, ctx), 0.0),
+    check_fd(Hinterpolant(z, Zk, c, ctx)*dz,
+             s->∇interpolant(z+s*dz, Zk, c, ctx), 0.0)
 end
 ```
 
@@ -2243,40 +2393,40 @@ $$
 $$
 
 ```{julia}
-function predvar(z, X, KC, k; kwargs...)
+function predvar(z, X, KC, ctx :: KernelContext)
     d, n = size(X)
-    kXz = [k(z, view(X,:,j); kwargs...) for j = 1:n]
-    k(z,z; kwargs...)-kXz'*(KC\kXz)
+    kXz = [kernel(ctx, z, view(X,:,j)) for j = 1:n]
+    kernel(ctx,z,z)-kXz'*(KC\kXz)
 end
 
-function ∇predvar(z, X, KC, k, ∇k!; kwargs...)
+function ∇predvar(z, X, KC, ctx :: RBFKernelContext)
     d, n = size(X)
     kzX = zeros(n)
     ∇kzX = zeros(d,n)
     for j = 1:n
         xj = @view X[:,j]
-        kzX[j] = k(z, xj; kwargs...)
-        ∇k!(view(∇kzX,:,j), z, xj; kwargs...)
+        kzX[j] = kernel(ctx, z, xj)
+        ∇x_kernel!(view(∇kzX,:,j), ctx, z, xj)
     end
     w = ldiv!(KC,kzX)
     -2*∇kzX*w
 end
 
-function Hpredvar(z, X, KC, k, ∇k!, Hk!; kwargs...)
+function Hpredvar(z, X, KC, ctx :: RBFKernelContext)
     d, n = size(X)
     kzX = zeros(n)
     ∇kzX = zeros(d,n)
     for j = 1:n
         xj = @view X[:,j]
-        kzX[j] = k(z, xj; kwargs...)
-        ∇k!(view(∇kzX,:,j), z, xj; kwargs...)
+        kzX[j] = kernel(ctx, z, xj)
+        ∇x_kernel!(view(∇kzX,:,j), ctx, z, xj)
     end
     w = ldiv!(KC,kzX)
     ∇kzX_divU = rdiv!(∇kzX, KC.U)
     H = zeros(d,d)
     for j = 1:n
         xj = @view X[:,j]
-        Hk!(H,z,xj,w[j]; kwargs...)
+        Hx_kernel!(H,ctx,z,xj,w[j])
     end
     mul!(H, ∇kzX_divU, ∇kzX_divU', -2.0, -2.0)
 end
@@ -2285,14 +2435,14 @@ end
 ```{julia}
 let
     Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y))
-    z = rand(2)
-    dz = rand(2)
-    ℓ = 0.8
-    KC = kernel_cholesky(k_SE, Zk; ℓ=ℓ)
+    z = [0.47; 0.47]
+    dz = randn(2)
+    ctx = KernelSE{2}(0.8)
+    KC = kernel_cholesky(ctx, Zk)
 
-    check_fd(dz'*∇predvar(z, Zk, KC, k_SE, ∇k_SE!; ℓ=ℓ),
-             s->predvar(z+s*dz, Zk, KC, k_SE; ℓ=ℓ), 0.0),
-    check_fd(Hpredvar(z, Zk, KC, k_SE, ∇k_SE!, Hk_SE!; ℓ=ℓ)*dz,
-             s->∇predvar(z+s*dz, Zk, KC, k_SE, ∇k_SE!; ℓ=ℓ), 0.0)
+    check_fd(dz'*∇predvar(z, Zk, KC, ctx),
+             s->predvar(z+s*dz, Zk, KC, ctx), 0.0, rtol=1e-5),
+    check_fd(Hpredvar(z, Zk, KC, ctx)*dz,
+             s->∇predvar(z+s*dz, Zk, KC, ctx), 0.0, rtol=1e-5)
 end
 ```
