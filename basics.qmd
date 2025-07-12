@@ -322,6 +322,7 @@ space, and any hyperparameters.
 
 ```{julia}
 abstract type KernelContext end
+(ctx :: KernelContext)(args...) = kernel(ctx, args...)
 ```
 
 All of the kernels we work with are based on radial basis functions,
@@ -634,10 +635,10 @@ Now we would like code to compute kernel matrices $K_{XY}$ (and
 vectors of kernel evaluations $k_{Xz}$).  Julia allows us to do this
 concisely using *comprehensions*:
 ```{julia}
-kernel0(ctx :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
-    [kernel(ctx,x,y) for x in eachcol(X), y in eachcol(Y)]
-kernel0(ctx :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
-    [kernel(ctx,x,z) for x in eachcol(X)]
+kernel0(k :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
+    [k(x,y) for x in eachcol(X), y in eachcol(Y)]
+kernel0(k :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
+    [k(x,z) for x in eachcol(X)]
 ```
 We use the *splatting* operation to pass the keyword
 arguments through to the invocation of the kernel functions.  This
@@ -650,14 +651,14 @@ storage, if storage has already been allocated.  Second, we want to
 exploit symmetry when computing $K_{XX}$.  Hence, we will put together
 a few helper functions for these tasks:
 ```{julia}
-function kernel!(KXX :: AbstractMatrix, ctx :: KernelContext,
+function kernel!(KXX :: AbstractMatrix, k :: KernelContext,
                  X :: AbstractMatrix)
     for j = 1:size(X,2)
         xj = @view X[:,j]
-        KXX[j,j] = kernel(ctx, xj, xj)
+        KXX[j,j] = k(xj, xj)
         for i = 1:j-1
             xi = @view X[:,i]
-            kij = kernel(ctx, xi, xj)
+            kij = k(xi, xj)
             KXX[i,j] = kij
             KXX[j,i] = kij
         end
@@ -665,35 +666,35 @@ function kernel!(KXX :: AbstractMatrix, ctx :: KernelContext,
     KXX
 end
 
-function kernel!(KXz :: AbstractVector, ctx :: KernelContext,
+function kernel!(KXz :: AbstractVector, k :: KernelContext,
                  X :: AbstractMatrix, z :: AbstractVector)
     for i = 1:size(X,2)
         xi = @view X[:,i]
-        KXz[i] = kernel(ctx, xi, z)
+        KXz[i] = k(xi, z)
     end
     KXz
 end
 
-function kernel!(KXY :: AbstractMatrix, ctx :: KernelContext,
+function kernel!(KXY :: AbstractMatrix, k :: KernelContext,
                  X :: AbstractMatrix, Y :: AbstractMatrix)
     for j = 1:size(Y,2)
         yj = @view Y[:,j]
         for i = 1:size(X,2)
             xi = @view X[:,i]
-            KXY[i,j] = kernel(ctx, xi, yj)
+            KXY[i,j] = k(xi, yj)
         end
     end
     KXY
 end
 
-kernel(ctx :: KernelContext, X :: AbstractMatrix) =
-    kernel!(zeros(size(X,2), size(X,2)), ctx, X)
+kernel(k :: KernelContext, X :: AbstractMatrix) =
+    kernel!(zeros(size(X,2), size(X,2)), k, X)
 
-kernel(ctx :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
-    kernel!(zeros(size(X,2)), ctx, X, z)
+kernel(k :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
+    kernel!(zeros(size(X,2)), k, X, z)
 
-kernel(ctx :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
-    kernel!(zeros(size(X,2), size(Y,2)), ctx, X, Y)
+kernel(k :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
+    kernel!(zeros(size(X,2), size(Y,2)), k, X, Y)
 ```
 
 Sometimes, we want to incorporate a shift in the kernel matrix
@@ -724,12 +725,16 @@ correctly, or at least that there is internal consistency between the versions:
 ```{julia}
 let
     Zk = kronecker_quasirand(2,10)
-    ctx = KernelSE{2}(1.0)
-    KXX1 = kernel0(ctx, Zk, Zk)
-    KXX2 = kernel(ctx, Zk)
-    KXX3 = kernel(ctx, Zk, Zk)
-    KXz1 = kernel0(ctx, Zk, Zk[:,1])
-    KXz2 = kernel(ctx, Zk, Zk[:,1])
+    k = KernelSE{2}(1.0)
+
+    # Comprehension-based eval
+    KXX1 = kernel0(k, Zk, Zk)
+    KXz1 = kernel0(k, Zk, Zk[:,1])
+
+    # Dispatch through call mechanism
+    KXX2 = k(Zk)
+    KXX3 = k(Zk, Zk)
+    KXz2 = k(Zk, Zk[:,1])
 
     norm(KXX1-KXX2)/norm(KXX1),
     norm(KXX1-KXX3)/norm(KXX1),
@@ -746,15 +751,15 @@ with storage.
 ```{julia}
 let
     Zk = kronecker_quasirand(2,10)
-    ctx = KernelSE{2}(1.0)
+    k = KernelSE{2}(1.0)
     Ktemp = zeros(10,10)
     Kvtemp = zeros(10)
     Zk1 = Zk[:,1]
-    KXX1 = @time kernel0(ctx, Zk, Zk)
-    KXz1 = @time kernel0(ctx, Zk, Zk1)
-    KXX2 = @time kernel!(Ktemp, ctx, Zk)
-    KXX3 = @time kernel!(Ktemp, ctx, Zk, Zk)
-    KXz2 = @time kernel!(Kvtemp, ctx, Zk, Zk1)
+    KXX1 = @time kernel0(k, Zk, Zk)
+    KXz1 = @time kernel0(k, Zk, Zk1)
+    KXX2 = @time kernel!(Ktemp, k, Zk)
+    KXX3 = @time kernel!(Ktemp, k, Zk, Zk)
+    KXz2 = @time kernel!(Kvtemp, k, Zk, Zk1)
     nothing
 end
 ```
@@ -1908,6 +1913,40 @@ end
 
 ∇θz_nllr(ctx :: KernelContext, X, invK, c, Copt, s=1e-10) =
     ∇θz_nllr!(zeros(nhypers(ctx)+1), ctx, X, invK, c, Copt, s)
+
+# NEW
+function ∇θ_nllr!(g, gp :: GPPContext, invK, Copt)
+    ctx, X, c = gp.ctx, getX(gp), getc(gp)
+    d, n = size(X)
+    for j = 1:n
+        xj = @view X[:,j]
+        cj = c[j]
+        cj_div_Copt = cj/Copt
+        ∇θ_kernel!(g, ctx, xj, xj, (invK[j,j]-cj*cj_div_Copt)/2)
+        for i = j+1:n
+            xi = @view X[:,i]
+            ci = c[i]
+            ∇θ_kernel!(g, ctx, xi, xj, (invK[i,j]-ci*cj_div_Copt))
+        end
+    end
+    g
+end
+
+function ∇θz_nllr!(g, gp :: GPPContext, invK, Copt)
+    ctx, X, c, s = gp.ctx, getX(gp), getc(gp), gp.η
+    ∇θ_nllr!(g, ctx, X, invK, c, Copt)
+    g[nhypers(ctx)+1] = (tr(invK) - c'*c/Copt)*s/2
+    g
+end
+
+∇θ_nllr(gp :: GPPContext, invK, Copt) =
+    ∇θ_nllr!(zeros(nhypers(gp.ctx)), gp, invK, Copt)
+
+∇θz_nllr(gp :: GPPContext, invK, Copt) =
+    ∇θz_nllr!(zeros(nhypers(gp.ctx)+1), gp, invK, Copt)
+
+∇θ_nllr(gp :: GPPContext) = ∇θ_nllr(gp, getKC(gp)\I, getCopt(gp))
+∇θz_nllr(gp :: GPPContext) = ∇θz_nllr(gp, getKC(gp)\I, getCopt(gp))
 ```
 
 And our finite difference check:
@@ -1918,19 +1957,10 @@ let
     s, ℓ = 1e-4, 1.0
     z=log(s)
 
-    function k_SE_nllr(ℓ,z)
-        KC = kernel_cholesky(KernelSE{2}(ℓ), Zk, exp(z))
-        nllr(KC, KC\y, y)
-    end
-
-    ctx = KernelSE{2}(ℓ)
-    KC = kernel_cholesky(ctx, Zk, s)
-    c = KC\y
-    Copt = (c'*y)/length(c)
-    g = ∇θz_nllr(ctx, Zk, KC\I, c, Copt, s)
-
-    check_fd(g[1], ℓ->k_SE_nllr(ℓ,z), ℓ),
-    check_fd(g[2], z->k_SE_nllr(ℓ,z), z)
+    gp_SE_nllr(ℓ,z) = nllr(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
+    g = ∇θz_nllr(GPPContext(KernelSE{2}(ℓ), s, Zk, y))
+    check_fd(g[1], ℓ->gp_SE_nllr(ℓ,z), ℓ)
+    check_fd(g[2], z->gp_SE_nllr(ℓ,z), z)
 end
 ```
 
