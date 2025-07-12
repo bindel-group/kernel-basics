@@ -1135,7 +1135,7 @@ function GPPContext(ctx :: KernelContext, η :: Float64, capacity)
     Kstore  = zeros(capacity, capacity)
     cstore  = zeros(capacity)
     ystore  = zeros(capacity)
-    scratch = zeros(capacity,d+1)
+    scratch = zeros(capacity,max(d+1,3))
     GPPContext(ctx, η, Xstore, Kstore, cstore, ystore, scratch, 0)
 end
 ```
@@ -1229,9 +1229,13 @@ Changing the kernel is also simple, though it involves a complete
 refactorization.
 
 ```{julia}
+function change_kernel_nofactor!(gp :: GPPContext, ctx :: KernelContext, η :: Float64)
+    GPPContext(ctx, η, gp.Xstore, gp.Kstore,
+               gp.cstore, gp.ystore, gp.scratch, gp.n)
+end
+
 function change_kernel!(gp :: GPPContext, ctx :: KernelContext, η :: Float64)
-    gpnew = GPPContext(ctx, η, gp.Xstore, gp.Kstore,
-                       gp.cstore, gp.ystore, gp.scratch, gp.n)
+    gpnew = change_kernel_nofactor!(gp, ctx, η)
     refactor!(gpnew)
     resolve!(gpnew)
     gpnew
@@ -1886,35 +1890,6 @@ As before, our code has slightly special treatment for the case where
 we also want derivatives with respect to $z = \log \eta$.
 
 ```{julia}
-function ∇θ_nllr!(g, ctx :: KernelContext, X, invK, c, Copt)
-    d, n = size(X)
-    for j = 1:n
-        xj = @view X[:,j]
-        cj = c[j]
-        cj_div_Copt = cj/Copt
-        ∇θ_kernel!(g, ctx, xj, xj, (invK[j,j]-cj*cj_div_Copt)/2)
-        for i = j+1:n
-            xi = @view X[:,i]
-            ci = c[i]
-            ∇θ_kernel!(g, ctx, xi, xj, (invK[i,j]-ci*cj_div_Copt))
-        end
-    end
-    g
-end
-
-function ∇θz_nllr!(g, ctx :: KernelContext, X, invK, c, Copt, s=1e-10)
-    ∇θ_nllr!(g, ctx, X, invK, c, Copt)
-    g[nhypers(ctx)+1] = (tr(invK) - c'*c/Copt)*s/2
-    g
-end
-
-∇θ_nllr(ctx :: KernelContext, X, invK, c, Copt) =
-    ∇θ_nllr!(zeros(nhypers(ctx)), ctx, X, invK, c, Copt, s)
-
-∇θz_nllr(ctx :: KernelContext, X, invK, c, Copt, s=1e-10) =
-    ∇θz_nllr!(zeros(nhypers(ctx)+1), ctx, X, invK, c, Copt, s)
-
-# NEW
 function ∇θ_nllr!(g, gp :: GPPContext, invK, Copt)
     ctx, X, c = gp.ctx, getX(gp), getc(gp)
     d, n = size(X)
@@ -1934,7 +1909,7 @@ end
 
 function ∇θz_nllr!(g, gp :: GPPContext, invK, Copt)
     ctx, X, c, s = gp.ctx, getX(gp), getc(gp), gp.η
-    ∇θ_nllr!(g, ctx, X, invK, c, Copt)
+    ∇θ_nllr!(g, gp, invK, Copt)
     g[nhypers(ctx)+1] = (tr(invK) - c'*c/Copt)*s/2
     g
 end
@@ -2012,17 +1987,18 @@ a small tweak to deal with the case where we don't care about the
 derivatives with respect to $z = \log(\eta)$.
 
 ```{julia}
-function Hθ_nllr(ctx :: KernelContext, X, y, s=1e-10; withz=true)
+function Hθ_nllr(gp :: GPPContext; withz=true)
+    ctx, X, y, s = gp.ctx, getX(gp), gety(gp), gp.η
     d, n = size(X)
     nθ = nhypers(ctx)
 
     # Factorization and initial solves
-    KC = kernel_cholesky(ctx, X, s)
+    KC = getKC(gp)
     invK = KC\I
     c̃ = KC.L\y
-    c = KC.U\c̃
-    Copt = (c'*y)/n
-    ϕ = nllr(KC, c, y)
+    c = getc(gp)
+    Copt = getCopt(gp)
+    ϕ = nllr(gp)
     ∂z_nllr = (tr(invK)-(c'*c)/Copt)*s/2
 
     # Set up space for NLL, gradient, and Hessian (including wrt z)
@@ -2091,7 +2067,7 @@ let
     s, ℓ = 1e-3, 0.89
     z = log(s)
 
-    testf(ℓ,z) = Hθ_nllr(KernelSE{2}(ℓ), Zk, y, exp(z))
+    testf(ℓ,z) = Hθ_nllr(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
     ϕref, gref, Href = testf(ℓ, z)
 
     max(check_fd(gref[1], ℓ->testf(ℓ,z)[1][1], ℓ),
@@ -2144,9 +2120,29 @@ function newton_hypers0(ctx :: KernelContext, η :: Float64,
     ctx, η
 end
 
+function newton_hypers0(gp :: GPPContext;
+                        niters = 12, max_dz=3.0,
+                        monitor = (ctx, η, ϕ, ∇ϕ)->nothing)
+    ctx, η = gp.ctx, gp.η
+    θ = getθ(ctx)
+    for j = 1:niters
+        ϕ, ∇ϕ, Hϕ = Hθ_nllr(gp)
+        monitor(ctx, η, ϕ, ∇ϕ)
+        u = -Hϕ\∇ϕ
+        if abs(u[end]) > max_dz
+            u *= max_dz/abs(u[2])
+        end
+        θ[:] .+= u[1:end-1]
+        ctx = updateθ(ctx, θ)
+        η *= exp(u[end])
+        gp = change_kernel!(gp, ctx, η)
+    end
+    gp
+end
+
 let
     Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y) + 5e-4*cos(100*y), 40)
-    ctx, η = KernelSE{2}(0.7), 1e-4
+    gp = GPPContext(KernelSE{2}(0.7), 1e-4, Zk, y)
 
     normgs = []
     function monitor(ctx, η, ϕ, ∇ϕ)
@@ -2155,8 +2151,8 @@ let
         push!(normgs, norm(∇ϕ))
     end
 
-    ctx, η = newton_hypers0(ctx, η, Zk, y, monitor=monitor)
-    println("Finished with ($(ctx.ℓ), $η)")
+    gp = newton_hypers0(gp, monitor=monitor)
+    println("Finished with ($(gp.ctx.ℓ), $(gp.η))")
     plot(normgs, yscale=:log10)
 end
 ```
@@ -2447,6 +2443,42 @@ function min_nllrT!(T, y, ηmin, ηmax, alpha, beta, c; nsamp=10, niter=5)
 end
 ```
 
+It's useful to us the GP context objects to wrap this up.
+
+```{julia}
+function tridiagonalize!(gp :: GPPContext)
+    K = getK(gp)
+    y = view(gp.scratch,1:gp.n,1)
+    kernel!(K, gp.ctx, getX(gp))
+    copy!(y, gety(gp))
+    tridiag_reduce!(K, y)
+end
+
+function nllrT!(gp :: GPPContext, η :: Float64)
+    K     = getK(gp)
+    y     = view(gp.scratch,1:gp.n,1)
+    alpha = view(gp.scratch,1:gp.n,2)
+    beta  = view(gp.scratch,1:gp.n,3)
+    c     = getc(gp)
+    nllrT!(K,y,η,alpha,beta,c)
+end
+
+function min_nllrT!(gp :: GPPContext, ηmin, ηmax;
+                    tridiagonalized=false, nsamp=10, niter=5)
+    if !tridiagonalized
+        tridiagonalize!(gp)
+    end
+    K     = getK(gp)
+    y     = view(gp.scratch,1:gp.n,1)
+    alpha = view(gp.scratch,1:gp.n,2)
+    beta  = view(gp.scratch,1:gp.n,3)
+    c     = getc(gp)
+    ηopt, ϕ, dϕ = min_nllrT!(K,y,ηmin,ηmax,alpha,beta,c,
+                             nsamp=nsamp, niter=niter)
+    change_kernel!(gp, gp.ctx, ηopt), ϕ, dϕ
+end
+```
+
 An example in this case is useful.
 
 ```{julia}
@@ -2456,82 +2488,58 @@ let
     Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y + 5e-4*cos(100*x)), n)
     ℓ = 1.2
 
-    alpha = zeros(n)
-    beta = zeros(n)
-    c = zeros(n)
-    ỹ = copy(y)
-    K = kernel(KernelSE{2}(ℓ), Zk)
-    tridiag_reduce!(K, ỹ)
-
+    gp = GPPContext(KernelSE{2}(ℓ), 1e-10, Zk, y)
+    tridiagonalize!(gp)
     ss = 10.0.^(-10:0.1:-2)
-    nllss = [nllrT!(K,ỹ,s,alpha,beta,c) for s in ss]
-    ϕ̄ss    = [t[1] for t in nllss]
-    ∂η_ϕ̄ss = [t[2] for t in nllss]
+    ϕss = [nllrT!(gp,s)[1] for s in ss]
+    gp, ϕ̄, dϕ̄ = min_nllrT!(gp,1e-10,1e-2,tridiagonalized=true)
 
-    η, ϕ̄, dϕ̄ = min_nllrT!(K,ỹ,1e-10,1e-2,alpha,beta,c)
-    plot(ss, ϕ̄ss, xscale=:log10, legend=:false)
-    plot!([η], [ϕ̄], marker=:circle)
+    plot(ss, ϕss, xscale=:log10, legend=:false)
+    plot!([gp.η], [ϕ̄], marker=:circle)
 end
 ```
 
 ## Putting it together
 
-While it is clearly possible to have more, most kernels have three
-hyperparameters: a length scale, a noise variance, and a diagonal
-variance.  We have seen that the diagonal variance can be treated
-analytically and the (log) noise variance can be treated on its own
-in a specialized way.  This suggests that, at least initially, we
-might consider a few steps (block) descent iteration in which we
-alternate between optimizing the length scale and the noise variance.
-This has the advantage that if we start with a small noise variance
-term, we are less likely to blunder into a solution in which most of
-the function behavior is explained as noise.
-After a few steps of alternating iteration, we can run a few Newton
-steps to polish up the result, if desired.
+With the fast tuning of the noise variance parameter ready, we can
+tweak our Newton iteration so that all the other hyperparameters are
+updated by Newton, and then the noise variance is updated with our
+tridiagonal solve.
 
 ```{julia}
-function bcd_hypers(ctx :: KernelContext, η :: Float64,
-                    X :: AbstractMatrix, y :: AbstractVector;
-                    niters = 3)
+function newton_hypers1(gp :: GPPContext;
+                        ηmin = 1e-10, ηmax = 1e-2,
+                        niters = 12, max_dz=3.0,
+                        monitor = (ctx, η, ϕ, ∇ϕ)->nothing)
+    ctx, η = gp.ctx, gp.η
     θ = getθ(ctx)
-
-    n = size(X,2)
-    alpha = zeros(n)
-    beta = zeros(n)
-    c = zeros(n)
-    ỹ = copy(y)
-    K = zeros(n,n)
-
     for j = 1:niters
-
-        # Refine length scale
-        for k = 1:4
-            _, g, H = Hθ_nllr(ctx, X, y, η; withz=false)
-            ctx = updateθ(ctx, θ-H\g)
+        ϕ, ∇ϕ, Hϕ = Hθ_nllr(gp)
+        monitor(ctx, gp.η, ϕ, ∇ϕ)
+        u = -Hϕ\∇ϕ
+        if abs(u[end]) > max_dz
+            u *= max_dz/abs(u[2])
         end
-
-        # Optimize η
-        kernel!(K, ctx, X)
-        ỹ[:] .= y
-        tridiag_reduce!(K, ỹ)
-        η, ϕ, ∂η_ϕ = min_nllrT!(K,ỹ,1e-10,1e-2,alpha,beta,c)
-
-        println("$(ctx.ℓ)\t$η\t$ϕ")
+        θ[:] .+= u[1:end-1]
+        ctx = updateθ(ctx, θ)
+        gp = change_kernel_nofactor!(gp, ctx, η)
+        gp, _, _ = min_nllrT!(gp, ηmin, ηmax)
     end
-    ctx, η
+    gp
 end
 
 let
     n = 40
     Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y) + 1e-3*cos(100*x), n)
-    ctx, η = KernelSE{2}(0.8), 1e-10
-    println("--- Start with alternating iteration ---")
-    ctx, η = bcd_hypers(ctx, η, Zk, y, niters=5)
+    gp = GPPContext(KernelSE{2}(1.2), 1e-10, Zk, y)
 
-    println("--- Clean up with Newton ---")
-    newton_hypers0(ctx, η, Zk, y, niters=15,
-                   monitor = (ctx, η, ϕ, ∇ϕ)->
-                       println("$(ctx.ℓ)\t$η\t$ϕ\t$(norm(∇ϕ))"))
+    normgs = []
+    function monitor(ctx, η, ϕ, ∇ϕ)
+        println("$(ctx.ℓ)\t$η\t$ϕ\t$(norm(∇ϕ))")
+        push!(normgs, norm(∇ϕ))
+    end
+    newton_hypers1(gp, monitor=monitor)
+    plot(normgs, yscale=:log10)
 end
 ```
 
@@ -2549,21 +2557,10 @@ The predictive mean is a linear combination $\sum_j c_j k(z, x_j)$;
 differentiating is straightforward because of linearity of differentiation.
 
 ```{julia}
-function interpolant(z, X :: AbstractMatrix,
-                     c :: AbstractVector, ctx :: KernelContext)
+function ∇x_mean(gp :: GPPContext, z :: AbstractVector)
+    ctx, X, c = gp.ctx, getX(gp), getc(gp)
     d, n = size(X)
-    sz = 0.0
-    for j = 1:n
-        xj = @view X[:,j]
-        sz += c[j]*kernel(ctx, z, xj)
-    end
-    sz
-end
-
-function ∇interpolant(z, X :: AbstractMatrix,
-                      c :: AbstractVector, ctx :: KernelContext)
-    d, n = size(X)
-    ∇sz = zeros(size(z))
+    ∇sz = zeros(d)
     for j = 1:n
         xj = @view X[:,j]
         ∇x_kernel!(∇sz, ctx, z, xj, c[j])
@@ -2571,10 +2568,10 @@ function ∇interpolant(z, X :: AbstractMatrix,
     ∇sz
 end
 
-function Hinterpolant(z, X :: AbstractMatrix,
-                      c :: AbstractVector, ctx :: KernelContext)
+function Hx_mean(gp :: GPPContext, z :: AbstractVector)
+    ctx, X, c = gp.ctx, getX(gp), getc(gp)
     d, n = size(X)
-    Hsz = zeros(length(z), length(z))
+    Hsz = zeros(d,d)
     for j = 1:n
         xj = @view X[:,j]
         Hx_kernel!(Hsz, ctx, z, xj, c[j])
@@ -2590,16 +2587,11 @@ finite difference check.
 let
     Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y))
     z = [0.47; 0.47]
-    dz = rand(2)
-    ctx = KernelSE{2}(0.8)
+    dz = randn(2)
 
-    KC = kernel_cholesky(ctx, Zk)
-    c = KC\y
-
-    check_fd(dz'*∇interpolant(z, Zk, c, ctx),
-             s->interpolant(z+s*dz, Zk, c, ctx), 0.0),
-    check_fd(Hinterpolant(z, Zk, c, ctx)*dz,
-             s->∇interpolant(z+s*dz, Zk, c, ctx), 0.0)
+    gp = GPPContext(KernelSE{2}(0.5), 1e-10, Zk, y)
+    check_fd(∇x_mean(gp, z)'*dz, s->mean(gp, z+s*dz), 0.0),
+    check_fd(Hx_mean(gp, z)*dz, s->∇x_mean(gp, z+s*dz), 0.0)
 end
 ```
 
