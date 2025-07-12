@@ -133,7 +133,7 @@ end
 diff_fd(f, x; h=1e-6) = (f(x+h)-f(x-h))/(2h)
 
 check_fd(df_ref, f, x; h=1e-6, rtol=1e-6, atol=0.0) =
-    check_approx(df_ref, diff_fd(f, x, h=h))
+    check_approx(df_ref, diff_fd(f, x, h=h), rtol=rtol, atol=atol)
 ```
 
 # Kernel functions
@@ -575,11 +575,11 @@ version available to allocate an outupt vector or matrix.  We note
 that these convenience functions do not need to be specialized for the
 rational quadratic case.
 ```{julia}
-∇θ_kernel(ctx :: RBFKernelContext, 
+∇θ_kernel(ctx :: RBFKernelContext,
           x :: AbstractVector, y :: AbstractVector) =
               ∇θ_kernel!(zeros(nhypers(ctx)), ctx, x, y)
 
-Hθ_kernel(ctx :: RBFKernelContext, 
+Hθ_kernel(ctx :: RBFKernelContext,
           x :: AbstractVector, y :: AbstractVector) =
               Hθ_kernel!(zeros(nhypers(ctx), nhypers(ctx)), ctx, x, y)
 
@@ -626,7 +626,7 @@ let
 end
 ```
 
-# Working with kernel matrices
+# Kernel matrices
 
 ## Kernel evaluation organization
 
@@ -634,9 +634,9 @@ Now we would like code to compute kernel matrices $K_{XY}$ (and
 vectors of kernel evaluations $k_{Xz}$).  Julia allows us to do this
 concisely using *comprehensions*:
 ```{julia}
-kernel_matrix0(ctx :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
+kernel0(ctx :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
     [kernel(ctx,x,y) for x in eachcol(X), y in eachcol(Y)]
-kernel_vector0(ctx :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
+kernel0(ctx :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
     [kernel(ctx,x,z) for x in eachcol(X)]
 ```
 We use the *splatting* operation to pass the keyword
@@ -650,8 +650,8 @@ storage, if storage has already been allocated.  Second, we want to
 exploit symmetry when computing $K_{XX}$.  Hence, we will put together
 a few helper functions for these tasks:
 ```{julia}
-function kernel_matrix!(KXX :: AbstractMatrix, ctx :: KernelContext,
-                        X :: AbstractMatrix)
+function kernel!(KXX :: AbstractMatrix, ctx :: KernelContext,
+                 X :: AbstractMatrix)
     for j = 1:size(X,2)
         xj = @view X[:,j]
         KXX[j,j] = kernel(ctx, xj, xj)
@@ -665,9 +665,8 @@ function kernel_matrix!(KXX :: AbstractMatrix, ctx :: KernelContext,
     KXX
 end
 
-function kernel_vector!(KXz :: AbstractVector, ctx :: KernelContext,
-                        X :: AbstractMatrix,
-                        z :: AbstractVector)
+function kernel!(KXz :: AbstractVector, ctx :: KernelContext,
+                 X :: AbstractMatrix, z :: AbstractVector)
     for i = 1:size(X,2)
         xi = @view X[:,i]
         KXz[i] = kernel(ctx, xi, z)
@@ -675,9 +674,8 @@ function kernel_vector!(KXz :: AbstractVector, ctx :: KernelContext,
     KXz
 end
 
-function kernel_matrix!(KXY :: AbstractMatrix, ctx :: KernelContext,
-                        X :: AbstractMatrix,
-                        Y :: AbstractMatrix)
+function kernel!(KXY :: AbstractMatrix, ctx :: KernelContext,
+                 X :: AbstractMatrix, Y :: AbstractMatrix)
     for j = 1:size(Y,2)
         yj = @view Y[:,j]
         for i = 1:size(X,2)
@@ -688,25 +686,24 @@ function kernel_matrix!(KXY :: AbstractMatrix, ctx :: KernelContext,
     KXY
 end
 
-kernel_matrix(ctx :: KernelContext, X :: AbstractMatrix) =
-    kernel_matrix!(zeros(size(X,2), size(X,2)), ctx, X)
+kernel(ctx :: KernelContext, X :: AbstractMatrix) =
+    kernel!(zeros(size(X,2), size(X,2)), ctx, X)
 
-kernel_vector(ctx :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
-    kernel_vector!(zeros(size(X,2)), ctx, X, z)
+kernel(ctx :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
+    kernel!(zeros(size(X,2)), ctx, X, z)
 
-kernel_matrix(ctx :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
-    kernel_matrix!(zeros(size(X,2), size(Y,2)), ctx, X, Y)
+kernel(ctx :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
+    kernel!(zeros(size(X,2), size(Y,2)), ctx, X, Y)
 ```
 
 Sometimes, we want to incorporate a shift in the kernel matrix
 construction as well.
 ```{julia}
-function kernel_matrix!(KXX :: AbstractMatrix, ctx :: KernelContext,
-                        X :: AbstractMatrix,
-                        s :: Real; kwargs...)
+function kernel!(KXX :: AbstractMatrix, ctx :: KernelContext,
+                 X :: AbstractMatrix, η :: Real)
     for j = 1:size(X,2)
         xj = @view X[:,j]
-        KXX[j,j] = kernel(ctx, xj, xj) + s
+        KXX[j,j] = kernel(ctx, xj, xj) + η
         for i = 1:j-1
             xi = @view X[:,i]
             kij = kernel(ctx, xi, xj)
@@ -717,8 +714,8 @@ function kernel_matrix!(KXX :: AbstractMatrix, ctx :: KernelContext,
     KXX
 end
 
-kernel_matrix(ctx :: KernelContext, X :: AbstractMatrix, s :: Real) =
-    kernel_matrix!(zeros(size(X,2), size(X,2)), ctx, X, s)
+kernel(ctx :: KernelContext, X :: AbstractMatrix, s :: Real) =
+    kernel!(zeros(size(X,2), size(X,2)), ctx, X, s)
 ```
 
 
@@ -728,11 +725,11 @@ correctly, or at least that there is internal consistency between the versions:
 let
     Zk = kronecker_quasirand(2,10)
     ctx = KernelSE{2}(1.0)
-    KXX1 = kernel_matrix0(ctx, Zk, Zk)
-    KXX2 = kernel_matrix(ctx, Zk)
-    KXX3 = kernel_matrix(ctx, Zk, Zk)
-    KXz1 = kernel_vector0(ctx, Zk, Zk[:,1])
-    KXz2 = kernel_vector(ctx, Zk, Zk[:,1])
+    KXX1 = kernel0(ctx, Zk, Zk)
+    KXX2 = kernel(ctx, Zk)
+    KXX3 = kernel(ctx, Zk, Zk)
+    KXz1 = kernel0(ctx, Zk, Zk[:,1])
+    KXz2 = kernel(ctx, Zk, Zk[:,1])
 
     norm(KXX1-KXX2)/norm(KXX1),
     norm(KXX1-KXX3)/norm(KXX1),
@@ -749,15 +746,15 @@ with storage.
 ```{julia}
 let
     Zk = kronecker_quasirand(2,10)
-    ctx = KernelSE{2}(1.0)    
+    ctx = KernelSE{2}(1.0)
     Ktemp = zeros(10,10)
     Kvtemp = zeros(10)
     Zk1 = Zk[:,1]
-    KXX1 = @time kernel_matrix0(ctx, Zk, Zk)
-    KXz1 = @time kernel_vector0(ctx, Zk, Zk1)
-    KXX2 = @time kernel_matrix!(Ktemp, ctx, Zk)
-    KXX3 = @time kernel_matrix!(Ktemp, ctx, Zk, Zk)
-    KXz2 = @time kernel_vector!(Kvtemp, ctx, Zk, Zk1)
+    KXX1 = @time kernel0(ctx, Zk, Zk)
+    KXz1 = @time kernel0(ctx, Zk, Zk1)
+    KXX2 = @time kernel!(Ktemp, ctx, Zk)
+    KXX3 = @time kernel!(Ktemp, ctx, Zk, Zk)
+    KXz2 = @time kernel!(Kvtemp, ctx, Zk, Zk1)
     nothing
 end
 ```
@@ -765,8 +762,8 @@ end
 We will also later want the first derivatives with respect to hyperparameters
 packed into a set of $n$-by-$n$ matrices:
 ```{julia}
-function dθ_kernel_matrix!(δKs :: AbstractArray, ctx :: KernelContext,
-                           X :: AbstractMatrix)
+function dθ_kernel!(δKs :: AbstractArray, ctx :: KernelContext,
+                    X :: AbstractMatrix)
     n, n, d = size(δKs)
     for j = 1:n
         xj = @view X[:,j]
@@ -780,15 +777,15 @@ function dθ_kernel_matrix!(δKs :: AbstractArray, ctx :: KernelContext,
             δKji[:] .= δKij
         end
     end
-    δKs    
+    δKs
 end
 
-dθ_kernel_matrix(ctx :: KernelContext, X :: AbstractMatrix) =
-    dθ_kernel_matrix!(zeros(size(X,2), size(X,2), nhypers(ctx)), ctx, X)
+dθ_kernel(ctx :: KernelContext, X :: AbstractMatrix) =
+    dθ_kernel!(zeros(size(X,2), size(X,2), nhypers(ctx)), ctx, X)
 ```
 
 
-## Covariances and Cholesky factors
+## Cholesky and whitening
 
 In the GP setting, the kernel defines a covariance.  We say $f$ is
 distributed as a GP with mean $\mu(x)$ and covariance kernel $k(x,x')$
@@ -909,17 +906,17 @@ therefore write some convenience functions for this.
 ```{julia}
 kernel_cholesky!(KXX :: AbstractMatrix, ctx :: KernelContext,
                  X :: AbstractMatrix) =
-    cholesky!(kernel_matrix!(KXX, ctx, X))
+    cholesky!(kernel!(KXX, ctx, X))
 
 kernel_cholesky(ctx :: KernelContext, X :: AbstractMatrix) =
-    cholesky!(kernel_matrix(ctx, X))
+    cholesky!(kernel(ctx, X))
 
 kernel_cholesky!(KXX :: AbstractMatrix, ctx :: KernelContext,
                  X :: AbstractMatrix, s :: Real) =
-    cholesky!(kernel_matrix!(KXX, ctx, X, s))
+    cholesky!(kernel!(KXX, ctx, X, s))
 
 kernel_cholesky(ctx :: KernelContext, X :: AbstractMatrix, s :: Real) =
-    cholesky!(kernel_matrix(ctx, X, s))
+    cholesky!(kernel(ctx, X, s))
 ```
 
 It is also useful to have a convenience function for evaluating a
@@ -951,7 +948,7 @@ use the overwriting version of the triangular solver.
 ```{julia}
 function eval_GP(KC :: Cholesky, ctx :: KernelContext, X :: AbstractMatrix,
                  c :: AbstractVector, z :: AbstractVector)
-    kXz = kernel_vector(ctx, X, z)
+    kXz = kernel(ctx, X, z)
     μz  = dot(kXz, c)
     rXz = ldiv!(KC.L, kXz)
     σz  = sqrt(kernel(ctx,z,z)-rXz'*rXz)
@@ -1011,7 +1008,7 @@ function extend_cholesky!(Kstorage :: AbstractMatrix, n, m)
 
     ldiv!(UpperTriangular(R11)', K12)         # R12 = R11'\K12
     BLAS.syrk!('U', 'T', -1.0, K12, 1.0, K22) # S = K22-R12'*R12
-    cholesky!(K22)                            # R22 = chol(S)
+    cholesky!(Symmetric(K22))                 # R22 = chol(S)
 
     # Return extended cholesky
     Cholesky(UpperTriangular(R))
@@ -1036,7 +1033,7 @@ let
 
     # Add a column of K to the matrix
     K12 = @view Kstorage[1:10,11]
-    kernel_vector!(K12, ctx, Zk, z)
+    kernel!(K12, ctx, Zk, z)
     Kstorage[11,11] = kernel(ctx, z, z)
 
     # Extend the Cholesky factorization
@@ -1094,6 +1091,221 @@ Hence, if the noise variance is treated as a tunable hyperparameter,
 we usually work with $\log \eta$ rather than with $\eta$, and tune
 subject to upper and lower bounds on $\log \eta$.
 
+## GPP context
+
+As with kernels, it is helpful to define a context object that
+includes the fundamental data needed for working with a GP posterior (GPP).
+This includes the kernel information, data points, kernel matrix,
+function values, weights, and some scratch space useful for computing
+the posterior variance and its derivatives.  We will typically
+allocate some extra space so that we can change the number of points
+without reallocating all our storage.
+
+```{julia}
+struct GPPContext{T <: KernelContext}
+    ctx :: T
+    η :: Float64
+    Xstore  :: Matrix{Float64}
+    Kstore  :: Matrix{Float64}
+    cstore  :: Vector{Float64}
+    ystore  :: Vector{Float64}
+    scratch :: Matrix{Float64}
+    n :: Integer
+end
+
+getX(gp :: GPPContext) = view(gp.Xstore,:,1:gp.n)
+getc(gp :: GPPContext) = view(gp.cstore,1:gp.n)
+gety(gp :: GPPContext) = view(gp.ystore,1:gp.n)
+getK(gp :: GPPContext) = view(gp.Kstore,1:gp.n,1:gp.n)
+getKC(gp :: GPPContext) = Cholesky(UpperTriangular(getK(gp)))
+capacity(gp :: GPPContext) = length(gp.ystore)
+getXrest(gp :: GPPContext) = view(gp.Xstore,:,gp.n+1:capacity(gp))
+getyrest(gp :: GPPContext) = view(gp.ystore,gp.n+1:capacity(gp))
+getXrest(gp :: GPPContext, m) = view(gp.Xstore,:,gp.n+1:gp.n+m)
+getyrest(gp :: GPPContext, m) = view(gp.ystore,gp.n+1:gp.n+m)
+
+function GPPContext(ctx :: KernelContext, η :: Float64, capacity)
+    d = ndims(ctx)
+    Xstore  = zeros(d, capacity)
+    Kstore  = zeros(capacity, capacity)
+    cstore  = zeros(capacity)
+    ystore  = zeros(capacity)
+    scratch = zeros(capacity,d+1)
+    GPPContext(ctx, η, Xstore, Kstore, cstore, ystore, scratch, 0)
+end
+```
+
+For internal use, we want to be able to regularly refactor the current
+kernel matrix and resolve the coefficient problem.
+
+```{julia}
+refactor!(gp :: GPPContext) = kernel_cholesky!(getK(gp), gp.ctx, getX(gp), gp.η)
+resolve!(gp :: GPPContext) = ldiv!(getKC(gp), copyto!(getc(gp), gety(gp)))
+```
+
+The basic operations we need are to add or remove data points,
+evaluate the predictive mean and variance (and gradients), and update
+the kernel hyperparameters.
+
+We start with adding data points, which is maybe the most complicated
+operation (since it involves extending a Cholesky factorization).
+
+```{julia}
+function add_points!(gp :: GPPContext, m)
+    n = gp.n + m
+    if gp.n > capacity(gp)
+        error("Added points exceed GPPContext capacity")
+    end
+
+    # Create new object (same storage)
+    gpnew = GPPContext(gp.ctx, gp.η, gp.Xstore, gp.Kstore,
+                       gp.cstore, gp.ystore, gp.scratch, n)
+
+    # Refactor (if start from 0) or extend Cholesky (if partly done)
+    if gp.n == 0
+        refactor!(gpnew)
+    else
+        X1, X2 = getX(gp), getXrest(gp,m)
+        R11 = getK(gp)
+        K12 = view(gp.Kstore,1:gp.n,gp.n+1:n)
+        K22 = view(gp.Kstore,gp.n+1:n,gp.n+1:n)
+        kernel!(K12, gp.ctx, X1, X2)
+        kernel!(K22, gp.ctx, X2, gp.η)
+        ldiv!(UpperTriangular(R11)', K12)         # R12 = R11'\K12
+        BLAS.syrk!('U', 'T', -1.0, K12, 1.0, K22) # S = K22-R12'*R12
+        cholesky!(Symmetric(K22))                 # R22 = chol(S)
+    end
+
+    # Update c
+    resolve!(gpnew)
+
+    gpnew
+end
+
+function add_points!(gp :: GPPContext,
+                     X :: AbstractMatrix, y :: AbstractVector)
+    m = length(y)
+    if size(X,2) != m
+        error("Inconsistent number of points and number of values")
+    end
+    copy!(getXrest(gp,m), X)
+    copy!(getyrest(gp,m), y)
+    add_points!(gp, m)
+end
+
+function GPPContext(ctx :: KernelContext, η :: Float64,
+                    X :: Matrix{Float64}, y :: Vector{Float64})
+    d, n = size(X)
+    if d != ndims(ctx)
+        error("Mismatch in dimensions of X and kernel")
+    end
+    gp = GPPContext(ctx, η, n)
+    copy!(gp.Xstore, X)
+    copy!(gp.ystore, y)
+    add_points!(gp, n)
+end
+```
+
+Removing points is rather simpler.
+
+```{julia}
+function remove_points!(gp :: GPPContext, m)
+    if m > gp.n
+        error("Cannot remove $m > $(gp.n) points")
+    end
+    gpnew = GPPContext(gp.ctx, gp.η, gp.Xstore, gp.Kstore,
+                       gp.cstore, gp.ystore, gp.scratch, gp.n-m)
+    resolve!(gpnew)
+    gpnew
+end
+```
+
+Changing the kernel is also simple, though it involves a complete
+refactorization.
+
+```{julia}
+function change_kernel!(gp :: GPPContext, ctx :: KernelContext, η :: Float64)
+    gpnew = GPPContext(ctx, η, gp.Xstore, gp.Kstore,
+                       gp.cstore, gp.ystore, gp.scratch, gp.n)
+    refactor!(gpnew)
+    resolve!(gpnew)
+    gpnew
+end
+```
+
+And now we compute the predictive mean and variance.
+
+```{julia}
+function mean(gp :: GPPContext, z :: AbstractVector)
+    ctx, X, c = gp.ctx, getX(gp), getc(gp)
+    d, n = size(X)
+    sz = 0.0
+    for j = 1:n
+        xj = @view X[:,j]
+        sz += c[j]*kernel(ctx, z, xj)
+    end
+    sz
+end
+
+function var(gp :: GPPContext, z :: AbstractVector)
+    kXz = view(gp.scratch,1:gp.n,1)
+    v = ldiv!(getKC(gp).L, kernel!(kXz, gp.ctx, getX(gp), z))
+    kernel(gp.ctx,z,z) - v'*v
+end
+```
+
+And, as usual, we have some tests.  First, we check adding and
+removing points and changing the kernel.
+
+```{julia}
+let
+    testf(x,y) = x^2+y
+    Zk, y = test_setup2d(testf)
+    ctx = KernelSE{2}(1.0)
+    ctx2 = KernelSE{2}(0.8)
+
+    gp1 = GPPContext(ctx, 0.0, Zk, y)
+    gpt = GPPContext(ctx, 0.0, 10)
+    gpt = add_points!(gpt, Zk, y)
+    check_approx(getc(gpt), getc(gp1))
+
+    gp2 = GPPContext(ctx2, 0.0, Zk, y)
+    gpt = change_kernel!(gpt, ctx2, 0.0)
+    check_approx(getc(gpt), getc(gp2))
+    gpt = change_kernel!(gpt, ctx, 0.0)
+
+    gpt = remove_points!(gpt, 2)
+    gp3 = GPPContext(ctx, 0.0, Zk[:,1:end-2], y[1:end-2])
+    check_approx(getc(gpt), getc(gp3))
+
+    gpt = add_points!(gpt, Zk[:,end-1:end], y[end-1:end])
+    check_approx(getc(gpt), getc(gp1))
+end
+```
+
+Now we check that the predictive mean and variance agree with our
+earlier calculations without the GPP context object.
+
+```{julia}
+let
+    testf(x,y) = x^2+y
+    Zk, y = test_setup2d(testf)
+    ctx = KernelSE{2}(1.0)
+    gp = GPPContext(ctx, 0.0, Zk, y)
+
+    z = [0.456; 0.456]
+    fz = testf(z...)
+    μz, σz = mean(gp, z), sqrt(var(gp,z))
+    zscore = (fz-μz)/σz
+    println("""
+        True value:       $fz
+        Posterior mean:   $μz
+        Posterior stddev: $σz
+        z-score:          $zscore
+        """)
+end
+```
+
 # Hyperparameter tuning
 
 Kernel hyperparameters are things like the diagonal variance, length
@@ -1124,7 +1336,7 @@ $$
   \frac{1}{2} \log \det K = \log \det R = \sum_{j} \log r_{jj}.
 $$
 ```{julia}
-function nll(KC :: Cholesky, c :: Vector, y :: Vector)
+function nll(KC :: Cholesky, c :: AbstractVector, y :: AbstractVector)
     n = length(c)
     ϕ = (dot(c,y) + n*log(2π))/2
     for k = 1:n
@@ -1132,6 +1344,8 @@ function nll(KC :: Cholesky, c :: Vector, y :: Vector)
     end
     ϕ
 end
+
+nll(gp :: GPPContext) = nll(getKC(gp), getc(gp), gety(gp))
 ```
 
 ## Differentiating the NLL
@@ -1310,9 +1524,9 @@ materialize the full $\delta K$ matrices.  We can also take advantage
 of symmetry.
 
 ```{julia}
-function ∇θ_nll!(g :: AbstractVector, ctx :: KernelContext,
-                 X :: AbstractMatrix,
-                 invK :: AbstractMatrix, c :: AbstractVector)
+function ∇θ_nll!(g :: AbstractVector, gp :: GPPContext,
+                 invK :: AbstractMatrix)
+    ctx, X, c = gp.ctx, getX(gp), getc(gp)
     d, n = size(X)
     for j = 1:n
         xj = @view X[:,j]
@@ -1327,28 +1541,10 @@ function ∇θ_nll!(g :: AbstractVector, ctx :: KernelContext,
     g
 end
 
-function Hθ_nll!(H :: AbstractMatrix, ctx :: KernelContext,
-                 X :: AbstractMatrix,
-                 invK :: AbstractMatrix, c :: AbstractVector)
-    d, n = size(X)
-    for j = 1:n
-        xj = @view X[:,j]
-        cj = c[j]
-        Hθ_kernel!(H, ctx, xj, xj, (invK[j,j]-cj*cj)/2)
-        for i = j+1:n
-            xi = @view X[:,i]
-            ci = c[i]
-            Hθ_kernel!(H, ctx, xi, xj, (invK[i,j]-ci*cj))
-        end
+∇θ_nll(gp :: GPPContext, invK) =
+    let nθ = nhypers(gp.ctx)
+        ∇θ_nll!(zeros(nθ), gp, invK)
     end
-    H
-end
-
-∇θ_nll(ctx :: KernelContext, X, invK, c) =
-    ∇θ_nll!(zeros(nhypers(ctx)), ctx, X, invK, c)
-
-Hθ_nll(ctx :: KernelContext, X, invK, c) =
-    Hθ_nll!(zeros(nhypers(ctx), nhypers(ctx)), ctx, X, invK, c)
 ```
 
 We treat the hyperparameter associated with the noise variance as a
@@ -1356,14 +1552,17 @@ special case.  If $z = \log \eta$ is the log-scale version of the
 noise variance, we also want to compute the extended gradient with the
 derivative with respect to $z$ at the end.
 ```{julia}
-function ∇θz_nll!(g, ctx :: KernelContext, X, invK, c, s=1e-10)
-    ∇θ_nll!(g, ctx, X, invK, c)
+function ∇θz_nll!(g, gp :: GPPContext, invK)
+    ctx, X, c, s = gp.ctx, getX(gp), getc(gp), gp.η
+    ∇θ_nll!(g, gp, invK)
     g[nhypers(ctx)+1] = (tr(invK) - c'*c)*s/2
     g
 end
 
-∇θz_nll(ctx :: KernelContext, X, invK, c, s=1e-10) =
-    ∇θz_nll!(zeros(nhypers(ctx)+1), ctx, X, invK, c, s)
+∇θz_nll(gp :: GPPContext, invK) =
+    ∇θz_nll!(zeros(nhypers(gp.ctx)+1), gp, invK)
+
+∇θz_nll(gp :: GPPContext) = ∇θz_nll(gp, getKC(gp)\I)
 ```
 
 Per usual, we also do a finite difference check.
@@ -1373,17 +1572,11 @@ let
     s, ℓ = 1e-4, 1.0
     z=log(s)
 
-    function k_SE_nll(ℓ,z)
-        KC = kernel_cholesky(KernelSE{2}(ℓ), Zk, exp(z))
-        nll(KC, KC\y, y)
-    end
+    gp_SE_nll(ℓ,z) = nll(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
+    g = ∇θz_nll(GPPContext(KernelSE{2}(ℓ), s, Zk, y))
 
-    KC = kernel_cholesky(KernelSE{2}(ℓ), Zk, s)
-    c = KC\y
-    g = ∇θz_nll(KernelSE{2}(ℓ), Zk, KC\I, c, s)
-
-    check_fd(g[1], ℓ->k_SE_nll(ℓ,z), ℓ),
-    check_fd(g[2], z->k_SE_nll(ℓ,z), z)
+    check_fd(g[1], ℓ->gp_SE_nll(ℓ,z), ℓ),
+    check_fd(g[2], z->gp_SE_nll(ℓ,z), z)
 end
 ```
 
@@ -1446,18 +1639,16 @@ function mul_slices!(result, As, b)
     result
 end
 
-function Hθ_nll(ctx :: KernelContext,
-                X :: AbstractMatrix, y :: AbstractVector, s=1e-10)
+function Hθ_nll(gp :: GPPContext)
+    ctx, X, y, c, s = gp.ctx, getX(gp), gety(gp), getc(gp), gp.η
     d, n = size(X)
     nθ = nhypers(ctx)
 
     # Factorization and initial solves
-    KC = kernel_cholesky(ctx, X, s)
+    KC = getKC(gp)
     invK = KC\I
     c̃ = KC.L\y
-    c = KC.U\c̃
-    invKc = KC\c
-    ϕ = nll(KC, c, y)
+    ϕ = nll(gp)
     ∂z_nll = (tr(invK)-(c'*c))*s/2
 
     # Set up space for NLL, gradient, and Hessian (including wrt z)
@@ -1465,12 +1656,22 @@ function Hθ_nll(ctx :: KernelContext,
     H = zeros(nθ+1,nθ+1)
 
     # Add Hessian contribution from kernel second derivatives
-    Hθ_nll!(H, ctx, X, invK, c)
+    d, n = size(X)
+    for j = 1:n
+        xj = @view X[:,j]
+        cj = c[j]
+        Hθ_kernel!(H, ctx, xj, xj, (invK[j,j]-cj*cj)/2)
+        for i = j+1:n
+            xi = @view X[:,i]
+            ci = c[i]
+            Hθ_kernel!(H, ctx, xi, xj, (invK[i,j]-ci*cj))
+        end
+    end
     H[nθ+1,nθ+1] = ∂z_nll
 
     # Set up whitened matrices δK̃ and products δK*c and δK̃*c̃
     δKs = zeros(n, n, nθ+1)
-    dθ_kernel_matrix!(δKs, ctx, X)
+    dθ_kernel!(δKs, ctx, X)
     for j=1:n  δKs[j,j,nθ+1] = s  end
     δK̃s = whiten_matrices!(δKs, KC)
     δK̃c̃s = mul_slices!(zeros(n,nθ+1), δK̃s, c̃)
@@ -1499,7 +1700,7 @@ let
     s, ℓ = 1e-3, 0.89
     z = log(s)
 
-    testf(ℓ,z) = Hθ_nll(KernelSE{2}(ℓ), Zk, y, exp(z))
+    testf(ℓ,z) = Hθ_nll(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
     ϕref, gref, Href = testf(ℓ, z)
 
     max(check_fd(gref[1], ℓ->testf(ℓ,z)[1][1], ℓ),
@@ -1597,10 +1798,8 @@ $$\begin{aligned}
   \frac{n}{2} \left( \log(2\pi) + 1 - \log n \right).
 \end{aligned}$$
 
-Per our custom, we code a short sanity check.
-
 ```{julia}
-function nllr(K̄C :: Cholesky, c̄ :: Vector, y :: Vector)
+function nllr(K̄C :: Cholesky, c̄ :: AbstractVector, y :: AbstractVector)
     n = length(c̄)
     ϕ = n*(log(dot(c̄,y)) + log(2π) + 1 - log(n))/2
     for k = 1:n
@@ -1609,20 +1808,22 @@ function nllr(K̄C :: Cholesky, c̄ :: Vector, y :: Vector)
     ϕ
 end
 
+nllr(gp :: GPPContext) = nllr(getKC(gp), getc(gp), gety(gp))
+getCopt(gp :: GPPContext) = ( getc(gp)'*gety(gp) )/gp.n
+```
+
+Per our custom, we code a short sanity check.
+
+```{julia}
 let
     Zk, y = test_setup2d((x,y) -> x^2 + y)
-    ctx = KernelSE{2}(1.0)
-
-    # Form kernel Cholesky and weights
-    K̄C = kernel_cholesky(ctx, Zk)
-    c̄ = K̄C\y
-    Copt = (c̄'*y)/10
+    gp = GPPContext(KernelSE{2}(1.0), 0.0, Zk, y)
 
     # Form scaled kernel Cholesky and weights
-    KC = Cholesky(sqrt(Copt)*K̄C.U)
+    KC = Cholesky(sqrt(getCopt(gp))*getKC(gp).U)
     c = KC\y
 
-    check_approx(nll(KC, c, y), nllr(K̄C, c̄, y))
+    check_approx(nll(KC, c, y), nllr(gp))
 end
 ```
 
@@ -1791,7 +1992,6 @@ function Hθ_nllr(ctx :: KernelContext, X, y, s=1e-10; withz=true)
     c̃ = KC.L\y
     c = KC.U\c̃
     Copt = (c'*y)/n
-    invKc = KC\c
     ϕ = nllr(KC, c, y)
     ∂z_nllr = (tr(invK)-(c'*c)/Copt)*s/2
 
@@ -1818,7 +2018,7 @@ function Hθ_nllr(ctx :: KernelContext, X, y, s=1e-10; withz=true)
 
     # Set up matrices δK
     δKs = zeros(n, n, nt)
-    dθ_kernel_matrix!(δKs, ctx, X)
+    dθ_kernel!(δKs, ctx, X)
     if withz
         for j=1:n
             δKs[j,j,nt] = s
@@ -1924,7 +2124,7 @@ let
         println("($ℓ,$η)\t$ϕ\t$(norm(∇ϕ))")
         push!(normgs, norm(∇ϕ))
     end
-    
+
     ctx, η = newton_hypers0(ctx, η, Zk, y, monitor=monitor)
     println("Finished with ($(ctx.ℓ), $η)")
     plot(normgs, yscale=:log10)
@@ -2130,7 +2330,7 @@ let
     η = 1e-3
 
     # Ordinary reduced NLL computation (full and pieces)
-    K = kernel_matrix(ctx, Zk)
+    K = kernel(ctx, Zk)
     KC = cholesky(K+η*I)
     c = KC\y
     data1 = c'*y
@@ -2163,7 +2363,7 @@ let
     Zk, y = test_setup2d((x,y) -> x^2 + y)
     ctx = KernelSE{2}(1.0)
     η = 1e-3
-    K = kernel_matrix(ctx, Zk)
+    K = kernel(ctx, Zk)
     tridiag_reduce!(K, y)
     check_fd(nllrT(K, y, η)[2], η->nllrT(K, y, η)[1], η)
 end
@@ -2230,7 +2430,7 @@ let
     beta = zeros(n)
     c = zeros(n)
     ỹ = copy(y)
-    K = kernel_matrix(KernelSE{2}(ℓ), Zk)
+    K = kernel(KernelSE{2}(ℓ), Zk)
     tridiag_reduce!(K, ỹ)
 
     ss = 10.0.^(-10:0.1:-2)
@@ -2271,7 +2471,7 @@ function bcd_hypers(ctx :: KernelContext, η :: Float64,
     c = zeros(n)
     ỹ = copy(y)
     K = zeros(n,n)
-    
+
     for j = 1:niters
 
         # Refine length scale
@@ -2281,12 +2481,12 @@ function bcd_hypers(ctx :: KernelContext, η :: Float64,
         end
 
         # Optimize η
-        kernel_matrix!(K, ctx, X)
+        kernel!(K, ctx, X)
         ỹ[:] .= y
         tridiag_reduce!(K, ỹ)
         η, ϕ, ∂η_ϕ = min_nllrT!(K,ỹ,1e-10,1e-2,alpha,beta,c)
-        
-        println("$(ctx.ℓ)\t$η\t$ϕ")        
+
+        println("$(ctx.ℓ)\t$η\t$ϕ")
     end
     ctx, η
 end
@@ -2295,7 +2495,7 @@ let
     n = 40
     Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y) + 1e-3*cos(100*x), n)
     ctx, η = KernelSE{2}(0.8), 1e-10
-    println("--- Start with alternating iteration ---")    
+    println("--- Start with alternating iteration ---")
     ctx, η = bcd_hypers(ctx, η, Zk, y, niters=5)
 
     println("--- Clean up with Newton ---")
@@ -2441,8 +2641,8 @@ let
     KC = kernel_cholesky(ctx, Zk)
 
     check_fd(dz'*∇predvar(z, Zk, KC, ctx),
-             s->predvar(z+s*dz, Zk, KC, ctx), 0.0, rtol=1e-5),
+             s->predvar(z+s*dz, Zk, KC, ctx), 0.0, rtol=1e-5, atol=1e-8),
     check_fd(Hpredvar(z, Zk, KC, ctx)*dz,
-             s->∇predvar(z+s*dz, Zk, KC, ctx), 0.0, rtol=1e-5)
+             s->∇predvar(z+s*dz, Zk, KC, ctx), 0.0, rtol=1e-5, atol=1e-8)
 end
 ```
