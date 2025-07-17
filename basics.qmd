@@ -415,7 +415,7 @@ H_{\theta} k(x,y) &=
 \end{aligned}$$
 This gives us the following generic code:
 ```{julia}
-function ∇θ_kernel!(g :: AbstractVector, ctx :: RBFKernelContext,
+function gθ_kernel!(g :: AbstractVector, ctx :: RBFKernelContext,
                     x :: AbstractVector, y :: AbstractVector, c=1.0)
     ℓ = ctx.ℓ
     s = dist(x,y)/ℓ
@@ -468,7 +468,7 @@ $$
 This gives us the following generic code.
 
 ```{julia}
-function ∇x_kernel!(g :: AbstractVector, ctx :: RBFKernelContext,
+function gx_kernel!(g :: AbstractVector, ctx :: RBFKernelContext,
                     x :: AbstractVector, y :: AbstractVector, c=1.0)
     ℓ = ctx.ℓ
     d = ndims(ctx)
@@ -537,7 +537,7 @@ Here we also want to compute the gradients and Hessians with respect
 to both $\ell$ and $\alpha$.
 
 ```{julia}
-function ∇θ_kernel!(g :: AbstractVector, ctx :: KernelRQ,
+function gθ_kernel!(g :: AbstractVector, ctx :: KernelRQ,
                     x :: AbstractVector, y :: AbstractVector, c=1.0)
     ℓ, α = ctx.ℓ, ctx.α
     s  = dist(x,y)/ℓ
@@ -578,17 +578,17 @@ version available to allocate an outupt vector or matrix.  We note
 that these convenience functions do not need to be specialized for the
 rational quadratic case.
 ```{julia}
-∇θ_kernel(ctx :: RBFKernelContext,
+gθ_kernel(ctx :: RBFKernelContext,
           x :: AbstractVector, y :: AbstractVector) =
-              ∇θ_kernel!(zeros(nhypers(ctx)), ctx, x, y)
+              gθ_kernel!(zeros(nhypers(ctx)), ctx, x, y)
 
 Hθ_kernel(ctx :: RBFKernelContext,
           x :: AbstractVector, y :: AbstractVector) =
               Hθ_kernel!(zeros(nhypers(ctx), nhypers(ctx)), ctx, x, y)
 
-∇x_kernel(ctx :: RBFKernelContext{d},
+gx_kernel(ctx :: RBFKernelContext{d},
           x :: AbstractVector, y :: AbstractVector) where {d} =
-              ∇x_kernel!(zeros(d), ctx, x, y)
+              gx_kernel!(zeros(d), ctx, x, y)
 
 Hx_kernel(ctx :: RBFKernelContext{d},
           x :: AbstractVector, y :: AbstractVector) where {d} =
@@ -601,10 +601,10 @@ Hx_kernel(ctx :: RBFKernelContext{d},
 let
     x, y = [0.1; 0.2], [0.8; 0.8]
     ℓ = 0.2+rand()
-    check_fd(∇θ_kernel(KernelSE{2}(ℓ),x,y)[1],
+    check_fd(gθ_kernel(KernelSE{2}(ℓ),x,y)[1],
              s->kernel(KernelSE{2}(ℓ+s),x,y), 0.0),
     check_fd(Hθ_kernel(KernelSE{2}(ℓ),x,y)[1,1],
-             s->∇θ_kernel(KernelSE{2}(ℓ+s),x,y)[1], 0.0)
+             s->gθ_kernel(KernelSE{2}(ℓ+s),x,y)[1], 0.0)
 end
 ```
 
@@ -613,10 +613,10 @@ let
     x, y = [0.1; 0.2], [0.8; 0.8]
     ℓ, α = 0.2+rand(), rand()
     k(ℓ,α) = KernelRQ{2}(ℓ,α)
-    check_fd(∇θ_kernel(k(ℓ,α),x,y)[1], s->kernel(k(ℓ+s,α),x,y), 0.0),
-    check_fd(∇θ_kernel(k(ℓ,α),x,y)[2], s->kernel(k(ℓ,α+s),x,y), 0.0),
-    check_fd(Hθ_kernel(k(ℓ,α),x,y)[:,1], s->∇θ_kernel(k(ℓ+s,α),x,y), 0.0),
-    check_fd(Hθ_kernel(k(ℓ,α),x,y)[:,2], s->∇θ_kernel(k(ℓ,α+s),x,y), 0.0)
+    check_fd(gθ_kernel(k(ℓ,α),x,y)[1], s->kernel(k(ℓ+s,α),x,y), 0.0),
+    check_fd(gθ_kernel(k(ℓ,α),x,y)[2], s->kernel(k(ℓ,α+s),x,y), 0.0),
+    check_fd(Hθ_kernel(k(ℓ,α),x,y)[:,1], s->gθ_kernel(k(ℓ+s,α),x,y), 0.0),
+    check_fd(Hθ_kernel(k(ℓ,α),x,y)[:,2], s->gθ_kernel(k(ℓ,α+s),x,y), 0.0)
 end
 ```
 
@@ -624,8 +624,8 @@ end
 let
     x, y, dx = [0.1; 0.2], [0.8; 0.8], rand(2)
     ctx = KernelM5{2}(0.5)
-    check_fd(∇x_kernel(ctx,x,y)'*dx, s->kernel(ctx,x+s*dx,y), 0.0),
-    check_fd(Hx_kernel(ctx,x,y)*dx, s->∇x_kernel(ctx,x+s*dx,y), 0.0)
+    check_fd(gx_kernel(ctx,x,y)'*dx, s->kernel(ctx,x+s*dx,y), 0.0),
+    check_fd(Hx_kernel(ctx,x,y)*dx, s->gx_kernel(ctx,x+s*dx,y), 0.0)
 end
 ```
 
@@ -775,12 +775,12 @@ function dθ_kernel!(δKs :: AbstractArray, ctx :: KernelContext,
     for j = 1:n
         xj = @view X[:,j]
         δKjj = @view δKs[j,j,:]
-        ∇θ_kernel!(δKjj, ctx, xj, xj)
+        gθ_kernel!(δKjj, ctx, xj, xj)
         for i = j+1:n
             xi = @view X[:,i]
             δKij = @view δKs[i,j,:]
             δKji = @view δKs[j,i,:]
-            ∇θ_kernel!(δKij, ctx, xi, xj)
+            gθ_kernel!(δKij, ctx, xi, xj)
             δKji[:] .= δKij
         end
     end
@@ -1266,15 +1266,15 @@ function mean(gp :: GPPContext, z :: AbstractVector)
     sz
 end
 
-function ∇x_mean(gp :: GPPContext, z :: AbstractVector)
+function gx_mean(gp :: GPPContext, z :: AbstractVector)
     ctx, X, c = gp.ctx, getX(gp), getc(gp)
     d, n = size(X)
-    ∇sz = zeros(d)
+    gsz = zeros(d)
     for j = 1:n
         xj = @view X[:,j]
-        ∇x_kernel!(∇sz, ctx, z, xj, c[j])
+        gx_kernel!(gsz, ctx, z, xj, c[j])
     end
-    ∇sz
+    gsz
 end
 
 function Hx_mean(gp :: GPPContext, z :: AbstractVector)
@@ -1321,40 +1321,40 @@ function var(gp :: GPPContext, z :: AbstractVector)
     kernel(gp.ctx,z,z) - v'*v
 end
 
-function ∇x_var(gp :: GPPContext, z :: AbstractVector)
+function gx_var(gp :: GPPContext, z :: AbstractVector)
     X, KC, ctx = getX(gp), getKC(gp), gp.ctx
     d, n = size(X)
     kXz  = view(gp.scratch,1:n,1)
-    ∇kXz = view(gp.scratch,1:n,2:d+1)
-    ∇kXz[:] .= 0.0
+    gkXz = view(gp.scratch,1:n,2:d+1)
+    gkXz[:] .= 0.0
     for j = 1:n
         xj = @view X[:,j]
         kXz[j] = kernel(ctx, z, xj)
-        ∇x_kernel!(view(∇kXz,j,:), ctx, z, xj)
+        gx_kernel!(view(gkXz,j,:), ctx, z, xj)
     end
     w = ldiv!(KC,kXz)
-    -2*(∇kXz'*w)
+    -2*(gkXz'*w)
 end
 
 function Hx_var(gp :: GPPContext, z :: AbstractVector)
     X, KC, ctx = getX(gp), getKC(gp), gp.ctx
     d, n = size(X)
     kXz  = view(gp.scratch,1:n,1)
-    ∇kXz = view(gp.scratch,1:n,2:d+1)
-    ∇kXz[:] .= 0.0
+    gkXz = view(gp.scratch,1:n,2:d+1)
+    gkXz[:] .= 0.0
     for j = 1:n
         xj = @view X[:,j]
         kXz[j] = kernel(ctx, z, xj)
-        ∇x_kernel!(view(∇kXz,j,:), ctx, z, xj)
+        gx_kernel!(view(gkXz,j,:), ctx, z, xj)
     end
     w = ldiv!(KC,kXz)
-    invL_∇kXz = ldiv!(KC.L, ∇kXz)
+    invL_gkXz = ldiv!(KC.L, gkXz)
     H = zeros(d,d)
     for j = 1:n
         xj = @view X[:,j]
         Hx_kernel!(H, ctx, z, xj, w[j])
     end
-    mul!(H, invL_∇kXz', invL_∇kXz, -2.0, -2.0)
+    mul!(H, invL_gkXz', invL_gkXz, -2.0, -2.0)
 end
 ```
 
@@ -1399,10 +1399,10 @@ let
     dz = randn(2)
 
     gp = GPPContext(KernelSE{2}(0.5), 1e-8, Zk, y)
-    max(check_fd(∇x_mean(gp, z)'*dz, s->mean(gp, z+s*dz), 0.0),
-        check_fd(Hx_mean(gp, z)*dz, s->∇x_mean(gp, z+s*dz), 0.0),
-        check_fd(∇x_var(gp, z)'*dz, s->var(gp, z+s*dz), 0.0),
-        check_fd(Hx_var(gp, z)*dz, s->∇x_var(gp, z+s*dz), 0.0))
+    max(check_fd(gx_mean(gp, z)'*dz, s->mean(gp, z+s*dz), 0.0),
+        check_fd(Hx_mean(gp, z)*dz, s->gx_mean(gp, z+s*dz), 0.0),
+        check_fd(gx_var(gp, z)'*dz, s->var(gp, z+s*dz), 0.0),
+        check_fd(Hx_var(gp, z)*dz, s->gx_var(gp, z+s*dz), 0.0))
 end
 ```
 
@@ -1647,26 +1647,26 @@ materialize the full $\delta K$ matrices.  We can also take advantage
 of symmetry.
 
 ```{julia}
-function ∇θ_nll!(g :: AbstractVector, gp :: GPPContext,
+function gθ_nll!(g :: AbstractVector, gp :: GPPContext,
                  invK :: AbstractMatrix)
     ctx, X, c = gp.ctx, getX(gp), getc(gp)
     d, n = size(X)
     for j = 1:n
         xj = @view X[:,j]
         cj = c[j]
-        ∇θ_kernel!(g, ctx, xj, xj, (invK[j,j]-cj*cj)/2)
+        gθ_kernel!(g, ctx, xj, xj, (invK[j,j]-cj*cj)/2)
         for i = j+1:n
             xi = @view X[:,i]
             ci = c[i]
-            ∇θ_kernel!(g, ctx, xi, xj, (invK[i,j]-ci*cj))
+            gθ_kernel!(g, ctx, xi, xj, (invK[i,j]-ci*cj))
         end
     end
     g
 end
 
-∇θ_nll(gp :: GPPContext, invK) =
+gθ_nll(gp :: GPPContext, invK) =
     let nθ = nhypers(gp.ctx)
-        ∇θ_nll!(zeros(nθ), gp, invK)
+        gθ_nll!(zeros(nθ), gp, invK)
     end
 ```
 
@@ -1675,17 +1675,17 @@ special case.  If $z = \log \eta$ is the log-scale version of the
 noise variance, we also want to compute the extended gradient with the
 derivative with respect to $z$ at the end.
 ```{julia}
-function ∇θz_nll!(g, gp :: GPPContext, invK)
+function gθz_nll!(g, gp :: GPPContext, invK)
     ctx, X, c, s = gp.ctx, getX(gp), getc(gp), gp.η
-    ∇θ_nll!(g, gp, invK)
+    gθ_nll!(g, gp, invK)
     g[nhypers(ctx)+1] = (tr(invK) - c'*c)*s/2
     g
 end
 
-∇θz_nll(gp :: GPPContext, invK) =
-    ∇θz_nll!(zeros(nhypers(gp.ctx)+1), gp, invK)
+gθz_nll(gp :: GPPContext, invK) =
+    gθz_nll!(zeros(nhypers(gp.ctx)+1), gp, invK)
 
-∇θz_nll(gp :: GPPContext) = ∇θz_nll(gp, getKC(gp)\I)
+gθz_nll(gp :: GPPContext) = gθz_nll(gp, getKC(gp)\I)
 ```
 
 Per usual, we also do a finite difference check.
@@ -1696,7 +1696,7 @@ let
     z=log(s)
 
     gp_SE_nll(ℓ,z) = nll(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
-    g = ∇θz_nll(GPPContext(KernelSE{2}(ℓ), s, Zk, y))
+    g = gθz_nll(GPPContext(KernelSE{2}(ℓ), s, Zk, y))
 
     check_fd(g[1], ℓ->gp_SE_nll(ℓ,z), ℓ),
     check_fd(g[2], z->gp_SE_nll(ℓ,z), z)
@@ -2004,38 +2004,38 @@ As before, our code has slightly special treatment for the case where
 we also want derivatives with respect to $z = \log \eta$.
 
 ```{julia}
-function ∇θ_nllr!(g, gp :: GPPContext, invK, Copt)
+function gθ_nllr!(g, gp :: GPPContext, invK, Copt)
     ctx, X, c = gp.ctx, getX(gp), getc(gp)
     d, n = size(X)
     for j = 1:n
         xj = @view X[:,j]
         cj = c[j]
         cj_div_Copt = cj/Copt
-        ∇θ_kernel!(g, ctx, xj, xj, (invK[j,j]-cj*cj_div_Copt)/2)
+        gθ_kernel!(g, ctx, xj, xj, (invK[j,j]-cj*cj_div_Copt)/2)
         for i = j+1:n
             xi = @view X[:,i]
             ci = c[i]
-            ∇θ_kernel!(g, ctx, xi, xj, (invK[i,j]-ci*cj_div_Copt))
+            gθ_kernel!(g, ctx, xi, xj, (invK[i,j]-ci*cj_div_Copt))
         end
     end
     g
 end
 
-function ∇θz_nllr!(g, gp :: GPPContext, invK, Copt)
+function gθz_nllr!(g, gp :: GPPContext, invK, Copt)
     ctx, X, c, s = gp.ctx, getX(gp), getc(gp), gp.η
-    ∇θ_nllr!(g, gp, invK, Copt)
+    gθ_nllr!(g, gp, invK, Copt)
     g[nhypers(ctx)+1] = (tr(invK) - c'*c/Copt)*s/2
     g
 end
 
-∇θ_nllr(gp :: GPPContext, invK, Copt) =
-    ∇θ_nllr!(zeros(nhypers(gp.ctx)), gp, invK, Copt)
+gθ_nllr(gp :: GPPContext, invK, Copt) =
+    gθ_nllr!(zeros(nhypers(gp.ctx)), gp, invK, Copt)
 
-∇θz_nllr(gp :: GPPContext, invK, Copt) =
-    ∇θz_nllr!(zeros(nhypers(gp.ctx)+1), gp, invK, Copt)
+gθz_nllr(gp :: GPPContext, invK, Copt) =
+    gθz_nllr!(zeros(nhypers(gp.ctx)+1), gp, invK, Copt)
 
-∇θ_nllr(gp :: GPPContext) = ∇θ_nllr(gp, getKC(gp)\I, getCopt(gp))
-∇θz_nllr(gp :: GPPContext) = ∇θz_nllr(gp, getKC(gp)\I, getCopt(gp))
+gθ_nllr(gp :: GPPContext) = gθ_nllr(gp, getKC(gp)\I, getCopt(gp))
+gθz_nllr(gp :: GPPContext) = gθz_nllr(gp, getKC(gp)\I, getCopt(gp))
 ```
 
 And our finite difference check:
@@ -2047,7 +2047,7 @@ let
     z=log(s)
 
     gp_SE_nllr(ℓ,z) = nllr(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
-    g = ∇θz_nllr(GPPContext(KernelSE{2}(ℓ), s, Zk, y))
+    g = gθz_nllr(GPPContext(KernelSE{2}(ℓ), s, Zk, y))
     check_fd(g[1], ℓ->gp_SE_nllr(ℓ,z), ℓ)
     check_fd(g[2], z->gp_SE_nllr(ℓ,z), z)
 end
@@ -2218,12 +2218,12 @@ than a factor of 20 or so.
 function newton_hypers0(ctx :: KernelContext, η :: Float64,
                         X :: AbstractMatrix, y :: AbstractVector;
                         niters = 12, max_dz=3.0,
-                        monitor = (ctx, η, ϕ, ∇ϕ)->nothing)
+                        monitor = (ctx, η, ϕ, gϕ)->nothing)
     θ = getθ(ctx)
     for j = 1:niters
-        ϕ, ∇ϕ, Hϕ = Hθ_nllr(ctx, X, y, η)
-        monitor(ctx, η, ϕ, ∇ϕ)
-        u = -Hϕ\∇ϕ
+        ϕ, gϕ, Hϕ = Hθ_nllr(ctx, X, y, η)
+        monitor(ctx, η, ϕ, gϕ)
+        u = -Hϕ\gϕ
         if abs(u[end]) > max_dz
             u *= max_dz/abs(u[2])
         end
@@ -2236,13 +2236,13 @@ end
 
 function newton_hypers0(gp :: GPPContext;
                         niters = 12, max_dz=3.0,
-                        monitor = (ctx, η, ϕ, ∇ϕ)->nothing)
+                        monitor = (ctx, η, ϕ, gϕ)->nothing)
     ctx, η = gp.ctx, gp.η
     θ = getθ(ctx)
     for j = 1:niters
-        ϕ, ∇ϕ, Hϕ = Hθ_nllr(gp)
-        monitor(ctx, η, ϕ, ∇ϕ)
-        u = -Hϕ\∇ϕ
+        ϕ, gϕ, Hϕ = Hθ_nllr(gp)
+        monitor(ctx, η, ϕ, gϕ)
+        u = -Hϕ\gϕ
         if abs(u[end]) > max_dz
             u *= max_dz/abs(u[2])
         end
@@ -2259,10 +2259,10 @@ let
     gp = GPPContext(KernelSE{2}(0.7), 1e-4, Zk, y)
 
     normgs = []
-    function monitor(ctx, η, ϕ, ∇ϕ)
+    function monitor(ctx, η, ϕ, gϕ)
         ℓ = ctx.ℓ
-        println("($ℓ,$η)\t$ϕ\t$(norm(∇ϕ))")
-        push!(normgs, norm(∇ϕ))
+        println("($ℓ,$η)\t$ϕ\t$(norm(gϕ))")
+        push!(normgs, norm(gϕ))
     end
 
     gp = newton_hypers0(gp, monitor=monitor)
@@ -2624,13 +2624,13 @@ tridiagonal solve.
 function newton_hypers1(gp :: GPPContext;
                         ηmin = 1e-10, ηmax = 1e-2,
                         niters = 12, max_dz=3.0,
-                        monitor = (ctx, η, ϕ, ∇ϕ)->nothing)
+                        monitor = (ctx, η, ϕ, gϕ)->nothing)
     ctx, η = gp.ctx, gp.η
     θ = getθ(ctx)
     for j = 1:niters
-        ϕ, ∇ϕ, Hϕ = Hθ_nllr(gp)
-        monitor(ctx, gp.η, ϕ, ∇ϕ)
-        u = -Hϕ\∇ϕ
+        ϕ, gϕ, Hϕ = Hθ_nllr(gp)
+        monitor(ctx, gp.η, ϕ, gϕ)
+        u = -Hϕ\gϕ
         if abs(u[end]) > max_dz
             u *= max_dz/abs(u[2])
         end
@@ -2648,9 +2648,9 @@ let
     gp = GPPContext(KernelSE{2}(1.2), 1e-10, Zk, y)
 
     normgs = []
-    function monitor(ctx, η, ϕ, ∇ϕ)
-        println("$(ctx.ℓ)\t$η\t$ϕ\t$(norm(∇ϕ))")
-        push!(normgs, norm(∇ϕ))
+    function monitor(ctx, η, ϕ, gϕ)
+        println("$(ctx.ℓ)\t$η\t$ϕ\t$(norm(gϕ))")
+        push!(normgs, norm(gϕ))
     end
     newton_hypers1(gp, monitor=monitor)
     plot(normgs, yscale=:log10)
@@ -2683,14 +2683,14 @@ $$\begin{aligned}
 \end{aligned}$$
 
 ```{julia}
-function H∇x_αLCB(gp :: GPPContext, x :: AbstractVector, λ :: Float64)
-    μ, ∇μ, Hμ = mean(gp, x), ∇x_mean(gp, x), Hx_mean(gp, x)
-    v, ∇v, Hv = var(gp, x),  ∇x_var(gp, x),  Hx_var(gp, x)
+function Hgx_αLCB(gp :: GPPContext, x :: AbstractVector, λ :: Float64)
+    μ, gμ, Hμ = mean(gp, x), gx_mean(gp, x), Hx_mean(gp, x)
+    v, gv, Hv = var(gp, x),  gx_var(gp, x),  Hx_var(gp, x)
     σ = sqrt(v)
     α = μ-λ*σ
-    ∇α = ∇μ - λ/(2σ)*∇v
-    Hα = Hμ - λ/(2σ)*Hv + λ/(4*σ*v)*∇v*∇v'
-    α, ∇α, Hα
+    gα = gμ - λ/(2σ)*gv
+    Hα = Hμ - λ/(2σ)*Hv + λ/(4*σ*v)*gv*gv'
+    α, gα, Hα
 end
 
 let
@@ -2699,9 +2699,9 @@ let
     z = [0.47; 0.47]
     dz = randn(2)
     λ = 2.3
-    g(s)  = H∇x_αLCB(gp, z+s*dz, λ)[1]
-    dg(s) = H∇x_αLCB(gp, z+s*dz, λ)[2]
-    Hg(s) = H∇x_αLCB(gp, z+s*dz, λ)[3]
+    g(s)  = Hgx_αLCB(gp, z+s*dz, λ)[1]
+    dg(s) = Hgx_αLCB(gp, z+s*dz, λ)[2]
+    Hg(s) = Hgx_αLCB(gp, z+s*dz, λ)[3]
     check_fd(dg(0)'*dz, g, 0.0),
     check_fd(Hg(0)*dz, dg, 0.0)
 end
@@ -3023,18 +3023,18 @@ H_u &=
 \end{aligned}$$
 
 ```{julia}
-function H∇x_u(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
-    μ, ∇μ, Hμ = mean(gp, x), ∇x_mean(gp, x), Hx_mean(gp, x)
-    v, ∇v, Hv = var(gp, x),  ∇x_var(gp, x),  Hx_var(gp, x)
+function Hgx_u(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
+    μ, gμ, Hμ = mean(gp, x), gx_mean(gp, x), Hx_mean(gp, x)
+    v, gv, Hv = var(gp, x),  gx_var(gp, x),  Hx_var(gp, x)
 
     σ = sqrt(v)
-    ∇μs, Hμs = ∇μ/σ, Hμ/σ
-    ∇vs, Hvs = ∇v/v, Hv/v
+    gμs, Hμs = gμ/σ, Hμ/σ
+    gvs, Hvs = gv/v, Hv/v
 
     u = (μ-fopt)/σ
-    ∇u = ∇μs - 0.5*u*∇vs
-    Hu = Hμs - 0.5*(∇μs*∇vs' + ∇vs*∇μs') + 0.5*u*(1.5*∇vs*∇vs' - Hvs)
-    u, ∇u, Hu
+    gu = gμs - 0.5*u*gvs
+    Hu = Hμs - 0.5*(gμs*gvs' + gvs*gμs') + 0.5*u*(1.5*gvs*gvs' - Hvs)
+    u, gu, Hu
 end
 ```
 
@@ -3055,7 +3055,7 @@ function check_derivs3_NLEI(f)
     check_fd(Hg(0)*dz, dg, 0.0)
 end
 
-check_derivs3_NLEI(H∇x_u)
+check_derivs3_NLEI(Hgx_u)
 ```
 
 The derivatives of $\psi(u)$ are
@@ -3065,13 +3065,13 @@ $$\begin{aligned}
 \end{aligned}$$
 
 ```{julia}
-function H∇x_ψNLG(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
-    u, ∇u, Hu = H∇x_u(gp, x, fopt)
+function Hgx_ψNLG(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
+    u, gu, Hu = Hgx_u(gp, x, fopt)
     ψ, dψ, Hψ = DψNLG(u)
-    ψ, dψ*∇u, Hψ*∇u*∇u' + dψ*Hu
+    ψ, dψ*gu, Hψ*gu*gu' + dψ*Hu
 end
 
-check_derivs3_NLEI(H∇x_ψNLG)
+check_derivs3_NLEI(Hgx_ψNLG)
 ```
 
 Getting to the actual acquisition function, we note that
@@ -3087,44 +3087,44 @@ $$\begin{aligned}
 \end{aligned}$$
 
 ```{julia}
-function H∇x_αNLEI0(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
-    v, ∇v, Hv = var(gp, x), ∇x_var(gp, x), Hx_var(gp, x)
-    ∇vs, Hvs = ∇v/v, Hv/v
+function Hgx_αNLEI0(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
+    v, gv, Hv = var(gp, x), gx_var(gp, x), Hx_var(gp, x)
+    gvs, Hvs = gv/v, Hv/v
 
-    u, ∇u, Hu = H∇x_u(gp, x, fopt)
+    u, gu, Hu = Hgx_u(gp, x, fopt)
     ψ, dψ, Hψ = DψNLG(u)
 
     -0.5*log(v) + ψ,
-    -0.5*∇vs + dψ*∇u,
-    -0.5*Hvs + 0.5*∇vs*∇vs' + Hψ*∇u*∇u' + dψ*Hu
+    -0.5*gvs + dψ*gu,
+    -0.5*Hvs + 0.5*gvs*gvs' + Hψ*gu*gu' + dψ*Hu
 end
 
-check_derivs3_NLEI(H∇x_αNLEI0)
+check_derivs3_NLEI(Hgx_αNLEI0)
 ```
 
 And we finally put everything together by combining all the algebra
 above.
 
 ```{julia}
-function H∇x_αNLEI(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
-    μ, ∇μ, Hμ = mean(gp, x), ∇x_mean(gp, x), Hx_mean(gp, x)
-    v, ∇v, Hv = var(gp, x),  ∇x_var(gp, x),  Hx_var(gp, x)
+function Hgx_αNLEI(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
+    μ, gμ, Hμ = mean(gp, x), gx_mean(gp, x), Hx_mean(gp, x)
+    v, gv, Hv = var(gp, x),  gx_var(gp, x),  Hx_var(gp, x)
 
     σ = sqrt(v)
-    ∇μs, Hμs = ∇μ/σ, Hμ/σ
-    ∇vs, Hvs = ∇v/(2v), Hv/v
+    gμs, Hμs = gμ/σ, Hμ/σ
+    gvs, Hvs = gv/(2v), Hv/v
 
     u = (μ-fopt)/σ
     ψ, dψ, Hψ = DψNLG(u)
 
     α = -log(σ) + ψ
-    dα = dψ*∇μs - (1+u*dψ)*∇vs
-    Hα = (-0.5*(1.0+u*dψ)*Hvs + dψ*Hμs + Hψ*∇μs*∇μs' +
-        (2.0 + u^2*Hψ + 3.0*u*dψ)*∇vs*∇vs' +
-        -(u*Hψ+dψ)*(∇μs*∇vs' + ∇vs*∇μs'))
+    dα = dψ*gμs - (1+u*dψ)*gvs
+    Hα = (-0.5*(1.0+u*dψ)*Hvs + dψ*Hμs + Hψ*gμs*gμs' +
+        (2.0 + u^2*Hψ + 3.0*u*dψ)*gvs*gvs' +
+        -(u*Hψ+dψ)*(gμs*gvs' + gvs*gμs'))
 
     α, dα, Hα
 end
 
-check_derivs3_NLEI(H∇x_αNLEI)
+check_derivs3_NLEI(Hgx_αNLEI)
 ```
