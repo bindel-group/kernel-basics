@@ -18,6 +18,7 @@ using Plots
 using Random
 using StatsFuns
 using SpecialFunctions
+using Optim
 ```
 
 ::: {.content-hidden unless-format="html"}
@@ -461,7 +462,7 @@ $$
 $$
 and
 $$
-  H_{\phi} =
+  H \phi =
   \frac{\phi'(\rho)}{\rho} I +
   \left( \phi''(\rho) - \frac{\phi'(\rho)}{\rho} \right) uu^T
 $$
@@ -1266,10 +1267,9 @@ function mean(gp :: GPPContext, z :: AbstractVector)
     sz
 end
 
-function gx_mean(gp :: GPPContext, z :: AbstractVector)
+function gx_mean!(gsz :: AbstractVector, gp :: GPPContext, z :: AbstractVector)
     ctx, X, c = gp.ctx, getX(gp), getc(gp)
     d, n = size(X)
-    gsz = zeros(d)
     for j = 1:n
         xj = @view X[:,j]
         gx_kernel!(gsz, ctx, z, xj, c[j])
@@ -1277,16 +1277,26 @@ function gx_mean(gp :: GPPContext, z :: AbstractVector)
     gsz
 end
 
-function Hx_mean(gp :: GPPContext, z :: AbstractVector)
+function gx_mean(gp :: GPPContext, z :: AbstractVector)
+    d = ndims(gp.ctx)
+    gx_mean!(zeros(d), gp, z)
+end
+
+function Hx_mean!(Hsz :: AbstractMatrix, gp :: GPPContext, z :: AbstractVector)
     ctx, X, c = gp.ctx, getX(gp), getc(gp)
     d, n = size(X)
-    Hsz = zeros(d,d)
     for j = 1:n
         xj = @view X[:,j]
         Hx_kernel!(Hsz, ctx, z, xj, c[j])
     end
     Hsz
 end
+
+function Hx_mean(gp :: GPPContext, z :: AbstractVector)
+    d = ndims(gp.ctx)
+    Hx_mean!(zeros(d,d), gp, z)
+end
+
 ```
 
 Straightforward or not, we will stick with the habit of including a
@@ -1307,8 +1317,8 @@ $$
 $$
 and differentiating a second time gives
 $$
-  H_v(x) =
-  -2 \sum_j H_k(z, x_j) (K_{XX}^{-1} k_{Xz})_j
+  H v(x) =
+  -2 \sum_j H k(z, x_j) (K_{XX}^{-1} k_{Xz})_j
   -2 (\nabla k_{zX}) K_{XX}^{-1} (\nabla k_{zX})^T.
 $$
 
@@ -1321,7 +1331,7 @@ function var(gp :: GPPContext, z :: AbstractVector)
     kernel(gp.ctx,z,z) - v'*v
 end
 
-function gx_var(gp :: GPPContext, z :: AbstractVector)
+function gx_var!(g :: AbstractVector, gp :: GPPContext, z :: AbstractVector)
     X, KC, ctx = getX(gp), getKC(gp), gp.ctx
     d, n = size(X)
     kXz  = view(gp.scratch,1:n,1)
@@ -1333,10 +1343,15 @@ function gx_var(gp :: GPPContext, z :: AbstractVector)
         gx_kernel!(view(gkXz,j,:), ctx, z, xj)
     end
     w = ldiv!(KC,kXz)
-    -2*(gkXz'*w)
+    mul!(g, gkXz', w, -2.0, 0.0)
 end
 
-function Hx_var(gp :: GPPContext, z :: AbstractVector)
+function gx_var(gp :: GPPContext, z :: AbstractVector)
+    d = ndims(gp.ctx)
+    gx_var!(zeros(d), gp, z)
+end
+
+function Hx_var!(H :: AbstractMatrix, gp :: GPPContext, z :: AbstractVector)
     X, KC, ctx = getX(gp), getKC(gp), gp.ctx
     d, n = size(X)
     kXz  = view(gp.scratch,1:n,1)
@@ -1349,12 +1364,17 @@ function Hx_var(gp :: GPPContext, z :: AbstractVector)
     end
     w = ldiv!(KC,kXz)
     invL_gkXz = ldiv!(KC.L, gkXz)
-    H = zeros(d,d)
+    H[:] .= 0.0
     for j = 1:n
         xj = @view X[:,j]
         Hx_kernel!(H, ctx, z, xj, w[j])
     end
     mul!(H, invL_gkXz', invL_gkXz, -2.0, -2.0)
+end
+
+function Hx_var(gp :: GPPContext, z :: AbstractVector)
+    d = ndims(gp.ctx)
+    Hx_var!(zeros(d,d), gp, z)
 end
 ```
 
@@ -3010,8 +3030,8 @@ $$\begin{aligned}
 \frac{\nabla \mu}{\sigma} -
 \frac{u}{2} \frac{\nabla v}{v}
 \\
-H_u &=
-\frac{H_\mu}{\sigma} -
+H u &=
+\frac{H \mu}{\sigma} -
 \frac{1}{2} \left(
 \frac{\nabla \mu}{\sigma} \frac{(\nabla v)^T}{v} +
 \frac{\nabla v}{v} \frac{(\nabla \mu)^T}{\sigma}
@@ -3019,7 +3039,7 @@ H_u &=
 \frac{u}{2} \left(
 \frac{3}{2}
 \frac{\nabla v}{v} \frac{(\nabla v)^T}{v} -
-\frac{H_v}{v} \right).
+\frac{H v}{v} \right).
 \end{aligned}$$
 
 ```{julia}
@@ -3061,7 +3081,7 @@ check_derivs3_NLEI(Hgx_u)
 The derivatives of $\psi(u)$ are
 $$\begin{aligned}
   \nabla \psi &= \psi'(u) \nabla u \\
-  H_\psi &= \psi''(u) \nabla u (\nabla u)^T + \psi'(u) H_u.
+  H \psi &= \psi''(u) \nabla u (\nabla u)^T + \psi'(u) H u.
 \end{aligned}$$
 
 ```{julia}
