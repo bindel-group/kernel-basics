@@ -2704,8 +2704,9 @@ $$\begin{aligned}
 
 ```{julia}
 function Hgx_αLCB(gp :: GPPContext, x :: AbstractVector, λ :: Float64)
+    Copt = getCopt(gp)
     μ, gμ, Hμ = mean(gp, x), gx_mean(gp, x), Hx_mean(gp, x)
-    v, gv, Hv = var(gp, x),  gx_var(gp, x),  Hx_var(gp, x)
+    v, gv, Hv = Copt*var(gp, x), Copt*gx_var(gp, x), Copt*Hx_var(gp, x)
     σ = sqrt(v)
     α = μ-λ*σ
     gα = gμ - λ/(2σ)*gv
@@ -3044,8 +3045,9 @@ H u &=
 
 ```{julia}
 function Hgx_u(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
+    Copt = getCopt(gp)
     μ, gμ, Hμ = mean(gp, x), gx_mean(gp, x), Hx_mean(gp, x)
-    v, gv, Hv = var(gp, x),  gx_var(gp, x),  Hx_var(gp, x)
+    v, gv, Hv = Copt*var(gp, x), Copt*gx_var(gp, x), Copt*Hx_var(gp, x)
 
     σ = sqrt(v)
     gμs, Hμs = gμ/σ, Hμ/σ
@@ -3108,7 +3110,8 @@ $$\begin{aligned}
 
 ```{julia}
 function Hgx_αNLEI0(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
-    v, gv, Hv = var(gp, x), gx_var(gp, x), Hx_var(gp, x)
+    Copt = getCopt(gp)
+    v, gv, Hv = Copt*var(gp, x), Copt*gx_var(gp, x), Copt*Hx_var(gp, x)
     gvs, Hvs = gv/v, Hv/v
 
     u, gu, Hu = Hgx_u(gp, x, fopt)
@@ -3127,8 +3130,9 @@ above.
 
 ```{julia}
 function Hgx_αNLEI(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
+    Copt = getCopt(gp)
     μ, gμ, Hμ = mean(gp, x), gx_mean(gp, x), Hx_mean(gp, x)
-    v, gv, Hv = var(gp, x),  gx_var(gp, x),  Hx_var(gp, x)
+    v, gv, Hv = Copt*var(gp, x), Copt*gx_var(gp, x), Copt*Hx_var(gp, x)
 
     σ = sqrt(v)
     gμs, Hμs = gμ/σ, Hμ/σ
