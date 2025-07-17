@@ -1203,6 +1203,10 @@ function add_points!(gp :: GPPContext,
     add_points!(gp, m)
 end
 
+function add_point!(gp :: GPPContext, x :: AbstractVector, y :: Float64)
+    add_points!(gp, reshape(x, length(x), 1), [y])
+end
+
 function GPPContext(ctx :: KernelContext, η :: Float64,
                     X :: Matrix{Float64}, y :: Vector{Float64})
     d, n = size(X)
@@ -3151,4 +3155,69 @@ function Hgx_αNLEI(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
 end
 
 check_derivs3_NLEI(Hgx_αNLEI)
+```
+
+# BO loop
+
+The basis of our BO loop is repeated optimization of the acquisition
+function (in our case log-EI) over the domain.  We use the
+interior-point Newton solver from `Optim.jl` as our basic optimizer.
+We are not being overly careful about performance, at least for now.
+
+```{julia}
+function optimize_EI(gp :: GPPContext, x0 :: AbstractVector,
+                     lo :: AbstractVector, hi :: AbstractVector)
+    fopt = minimum(gety(gp))
+    fun(x) = Hgx_αNLEI(gp, x, fopt)[1]
+    fun_grad!(g, x) = copyto!(g, Hgx_αNLEI(gp, x, fopt)[2])
+    fun_hess!(H, x) = copyto!(H, Hgx_αNLEI(gp, x, fopt)[3])
+    df = TwiceDifferentiable(fun, fun_grad!, fun_hess!, x0)
+    dfc = TwiceDifferentiableConstraints(lo, hi)
+    res = optimize(df, dfc, x0, IPNewton())
+end
+```
+
+We will generally do a multi-start solver to find a good solution.
+For simplicity, we'll use random starts for the moment.
+
+```{julia}
+function optimize_EI(gp :: GPPContext,
+                     lo :: AbstractVector, hi :: AbstractVector;
+                     nstarts = 10, verbose=true)
+    bestα = Inf
+    bestx = [0.0; 0.0]
+    for j = 1:10
+        z = lo + (hi-lo).*rand(length(lo))
+        res = optimize_EI(gp, z, [0.0; 0.0], [1.0; 1.0])
+        if verbose
+            println("From $z: $(Optim.minimum(res)) at $(Optim.minimizer(res))")
+        end
+        if Optim.minimum(res) < bestα
+            bestα = Optim.minimum(res)
+            bestx[:] = Optim.minimizer(res)
+        end
+    end
+    bestα, bestx
+end
+```
+
+Now we do a simple BO loop.  We don't bother to tune the length scale
+or the noise variance in this case, but of course we automatically
+tune the diagonal variance.
+
+```{julia}
+let
+    testf(x,y) = x^2+y
+    Zk, y = test_setup2d(testf)
+    gp = GPPContext(KernelSE{2}(0.8), 1e-8, 20)
+    gp = add_points!(gp, Zk, y)
+    for k = 1:5
+        bestα, bestx = optimize_EI(gp, [0.0; 0.0], [1.0; 1.0], verbose=false)
+        y = testf(bestx...)
+        gp = add_point!(gp, bestx, y)
+        println("$k: EI=$(exp(-bestα)), f($bestx) = $y")
+    end
+    println("--- End loop ---")
+    println("Best found: $(minimum(gety(gp)))")
+end
 ```
