@@ -395,7 +395,7 @@ end
 
 One of the reasons for defining a kernel context is that it allows us
 to have a generic high-performance interface for kernel operations.
-The most fundammental operation, of course, is evaluating the kernel
+The most fundamental operation, of course, is evaluating the kernel
 on a pair of points.
 
 ```{julia}
