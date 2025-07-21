@@ -1,0 +1,12 @@
+project:
+  output-dir: _output
+
+engine: julia
+  
+format:
+  html:
+    toc: true
+  pdf:
+    toc: true
+    monofont: "Fira Code"
+
