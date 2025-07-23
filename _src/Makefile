@@ -1,4 +1,4 @@
-SRC=sample.jl fdchecks.jl kfuns.jl kmats.jl
+SRC=sample.jl fdchecks.jl kfuns.jl kmats.jl gpp.jl
 QMD=$(SRC:.jl=.qmd)
 
 all: ${QMD}

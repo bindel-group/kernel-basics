@@ -1,3 +1,5 @@
+#ldoc on
+#=
 # GPP context
 
 As with kernels, it is helpful to define a context object that
@@ -7,8 +9,8 @@ function values, weights, and some scratch space useful for computing
 the posterior variance and its derivatives.  We will typically
 allocate some extra space so that we can change the number of points
 without reallocating all our storage.
+=#
 
-```{julia}
 struct GPPContext{T <: KernelContext}
     ctx :: T
     η :: Float64
@@ -40,16 +42,16 @@ function GPPContext(ctx :: KernelContext, η :: Float64, capacity)
     scratch = zeros(capacity,max(d+1,3))
     GPPContext(ctx, η, Xstore, Kstore, cstore, ystore, scratch, 0)
 end
-```
 
+#=
 For internal use, we want to be able to regularly refactor the current
 kernel matrix and resolve the coefficient problem.
+=#
 
-```{julia}
 refactor!(gp :: GPPContext) = kernel_cholesky!(getK(gp), gp.ctx, getX(gp), gp.η)
 resolve!(gp :: GPPContext) = ldiv!(getKC(gp), copyto!(getc(gp), gety(gp)))
-```
 
+#=
 The basic operations we need are to add or remove data points,
 evaluate the predictive mean and variance (and gradients), and update
 the kernel hyperparameters.
@@ -58,8 +60,8 @@ the kernel hyperparameters.
 
 We start with adding data points, which is maybe the most complicated
 operation (since it involves extending a Cholesky factorization).
+=#
 
-```{julia}
 function add_points!(gp :: GPPContext, m)
     n = gp.n + m
     if gp.n > capacity(gp)
@@ -117,13 +119,13 @@ function GPPContext(ctx :: KernelContext, η :: Float64,
     copy!(gp.ystore, y)
     add_points!(gp, n)
 end
-```
 
+#=
 ## Removing points
 
 Removing points is rather simpler.
+=#
 
-```{julia}
 function remove_points!(gp :: GPPContext, m)
     if m > gp.n
         error("Cannot remove $m > $(gp.n) points")
@@ -133,14 +135,14 @@ function remove_points!(gp :: GPPContext, m)
     resolve!(gpnew)
     gpnew
 end
-```
 
+#=
 ## Changing kernels
 
 Changing the kernel is also simple, though it involves a complete
 refactorization.
+=#
 
-```{julia}
 function change_kernel_nofactor!(gp :: GPPContext, ctx :: KernelContext, η :: Float64)
     GPPContext(ctx, η, gp.Xstore, gp.Kstore,
                gp.cstore, gp.ystore, gp.scratch, gp.n)
@@ -152,13 +154,13 @@ function change_kernel!(gp :: GPPContext, ctx :: KernelContext, η :: Float64)
     resolve!(gpnew)
     gpnew
 end
-```
 
+#=
 ## Predictive mean
 
 And now we compute the predictive mean and its derivatives.
+=#
 
-```{julia}
 function mean(gp :: GPPContext, z :: AbstractVector)
     ctx, X, c = gp.ctx, getX(gp), getc(gp)
     d, n = size(X)
@@ -200,11 +202,9 @@ function Hx_mean(gp :: GPPContext, z :: AbstractVector)
     Hx_mean!(zeros(d,d), gp, z)
 end
 
-```
-
+#=
 Straightforward or not, we will stick with the habit of including a
 finite difference check.
-
 
 ## Predictive variance
 
@@ -224,8 +224,8 @@ $$
   -2 \sum_j H k(z, x_j) (K_{XX}^{-1} k_{Xz})_j
   -2 (\nabla k_{zX}) K_{XX}^{-1} (\nabla k_{zX})^T.
 $$
+=#
 
-```{julia}
 function var(gp :: GPPContext, z :: AbstractVector)
     kXz = view(gp.scratch,1:gp.n,1)
     kernel!(kXz, gp.ctx, getX(gp), z)
@@ -279,8 +279,8 @@ function Hx_var(gp :: GPPContext, z :: AbstractVector)
     d = ndims(gp.ctx)
     Hx_var!(zeros(d,d), gp, z)
 end
-```
 
+#=
 ## Testing
 
 And, as usual, we have some tests.  First, we check adding and
@@ -351,3 +351,4 @@ let
         """)
 end
 ```
+=#
