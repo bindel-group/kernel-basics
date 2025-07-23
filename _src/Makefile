@@ -1,17 +1,15 @@
-SRC=	testing.jl \
-	sample.jl \
-	kfuns.jl \
-	kmats.jl \
-	gpp.jl \
-	hypers.jl \
-	acquisition.jl \
-	bo_step.jl \
-	test_kfuns.jl \
-	test_kmats.jl
+QMD=	../_ldoc/testing.qmd \
+	../_ldoc/sample.qmd \
+	../_ldoc/kfuns.qmd \
+	../_ldoc/kmats.qmd \
+	../_ldoc/gpp.qmd \
+	../_ldoc/hypers.qmd \
+	../_ldoc/acquisition.qmd \
+	../_ldoc/bo_step.qmd \
+	../_ldoc/test_kfuns.qmd \
+	../_ldoc/test_kmats.qmd
 
-QMD=$(SRC:.jl=.qmd)
-
-%.qmd: %.jl
+../_ldoc/%.qmd: %.jl
 	lua ldoc.lua -p quarto -highlight julia $< -o $@
 
 .PHONY: all test clean distclean
@@ -19,11 +17,10 @@ QMD=$(SRC:.jl=.qmd)
 all: ${QMD}
 
 test:
-	julia test_kfuns.jl
-	julia test_kmats.jl
+	julia run_tests.jl
 
 clean:
 	rm -f *~
 
 distclean: clean
-	rm -f sample.qmd
+	rm -f $(QMD)

@@ -66,20 +66,20 @@ The basic moving pieces are:
 - Optimization of acquisition functions
 - Additional numerical tricks
 
-{{< include _src/testing.qmd >}}
+{{< include _ldoc/testing.qmd >}}
 
-{{< include _src/sample.qmd >}}
+{{< include _ldoc/sample.qmd >}}
 
-{{< include _src/kfuns.qmd >}}
-{{< include _src/test_kfuns.qmd >}}
+{{< include _ldoc/kfuns.qmd >}}
+{{< include _ldoc/test_kfuns.qmd >}}
 
-{{< include _src/kmats.qmd >}}
-{{< include _src/test_kmats.qmd >}}
+{{< include _ldoc/kmats.qmd >}}
+{{< include _ldoc/test_kmats.qmd >}}
 
-{{< include _src/gpp.qmd >}}
+{{< include _ldoc/gpp.qmd >}}
 
-{{< include _src/hypers.qmd >}}
+{{< include _ldoc/hypers.qmd >}}
 
-{{< include _src/acquisition.qmd >}}
+{{< include _ldoc/acquisition.qmd >}}
 
-{{< include _src/bo_step.qmd >}}
+{{< include _ldoc/bo_step.qmd >}}
