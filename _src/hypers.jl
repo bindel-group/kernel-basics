@@ -1,3 +1,5 @@
+#ldoc on
+#=
 # Hyperparameter tuning
 
 Kernel hyperparameters are things like the diagonal variance, length
@@ -27,7 +29,8 @@ NLL can be done in $O(n)$ time, using the fact that
 $$
   \frac{1}{2} \log \det K = \log \det R = \sum_{j} \log r_{jj}.
 $$
-```{julia}
+=#
+
 function nll(KC :: Cholesky, c :: AbstractVector, y :: AbstractVector)
     n = length(c)
     ϕ = (dot(c,y) + n*log(2π))/2
@@ -38,8 +41,8 @@ function nll(KC :: Cholesky, c :: AbstractVector, y :: AbstractVector)
 end
 
 nll(gp :: GPPContext) = nll(getKC(gp), getc(gp), gety(gp))
-```
 
+#=
 ## Differentiating the NLL
 
 We first briefly recall how variational notation works.  For a given
@@ -214,8 +217,8 @@ computation as well.
 If we compute the gradient this way, we do not ever need to
 materialize the full $\delta K$ matrices.  We can also take advantage
 of symmetry.
+=#
 
-```{julia}
 function gθ_nll!(g :: AbstractVector, gp :: GPPContext,
                  invK :: AbstractMatrix)
     ctx, X, c = gp.ctx, getX(gp), getc(gp)
@@ -237,13 +240,14 @@ gθ_nll(gp :: GPPContext, invK) =
     let nθ = nhypers(gp.ctx)
         gθ_nll!(zeros(nθ), gp, invK)
     end
-```
 
+#=
 We treat the hyperparameter associated with the noise variance as a
 special case.  If $z = \log \eta$ is the log-scale version of the
 noise variance, we also want to compute the extended gradient with the
 derivative with respect to $z$ at the end.
-```{julia}
+=#
+
 function gθz_nll!(g, gp :: GPPContext, invK)
     ctx, X, c, s = gp.ctx, getX(gp), getc(gp), gp.η
     gθ_nll!(g, gp, invK)
@@ -255,8 +259,8 @@ gθz_nll(gp :: GPPContext, invK) =
     gθz_nll!(zeros(nhypers(gp.ctx)+1), gp, invK)
 
 gθz_nll(gp :: GPPContext) = gθz_nll(gp, getKC(gp)\I)
-```
 
+#=
 Per usual, we also do a finite difference check.
 ```{julia}
 let
@@ -284,7 +288,8 @@ $$\begin{aligned}
 \end{aligned}$$
 
 This is something we want to do systematically across hyperparameters.
-```{julia}
+=#
+
 function whiten_matrix!(δK, KC :: Cholesky)
     ldiv!(KC.L, δK)
     rdiv!(δK, KC.U)
@@ -298,8 +303,8 @@ function whiten_matrices!(δKs, KC :: Cholesky)
     end
     δKs
 end
-```
 
+#=
 Then we can rewrite the gradient and Hessian as
 $$\begin{aligned}
   \delta \phi &= \frac{1}{2} \tr(\delta \tilde{K}) - \frac{1}{2} \tilde{c}^T
@@ -321,8 +326,8 @@ avoids forming $K^{-2}$ or $L^{-1} L^{-T}$, either of which requires
 $O(n^3)$ time.  Hence, our current code treats $z = \log \eta$ like
 the other hyperparameters, save that the kernel functions are not
 called to compute the derivative.
+=#
 
-```{julia}
 function mul_slices!(result, As, b)
     m, n, k = size(As)
     for j=1:k
@@ -382,8 +387,8 @@ function Hθ_nll(gp :: GPPContext)
 
     ϕ, g, H
 end
-```
 
+#=
 As usual, we sanity check on a simple case.
 
 ```{julia}
@@ -489,8 +494,8 @@ $$\begin{aligned}
   \frac{n}{2} \log(y^T \bar{K}^{-1} y) +
   \frac{n}{2} \left( \log(2\pi) + 1 - \log n \right).
 \end{aligned}$$
+=#
 
-```{julia}
 function nllr(K̄C :: Cholesky, c̄ :: AbstractVector, y :: AbstractVector)
     n = length(c̄)
     ϕ = n*(log(dot(c̄,y)) + log(2π) + 1 - log(n))/2
@@ -502,8 +507,8 @@ end
 
 nllr(gp :: GPPContext) = nllr(getKC(gp), getc(gp), gety(gp))
 getCopt(gp :: GPPContext) = ( getc(gp)'*gety(gp) )/gp.n
-```
 
+#=
 Per our custom, we code a short sanity check.
 
 ```{julia}
@@ -571,8 +576,8 @@ $$
 $$
 As before, our code has slightly special treatment for the case where
 we also want derivatives with respect to $z = \log \eta$.
+=#
 
-```{julia}
 function gθ_nllr!(g, gp :: GPPContext, invK, Copt)
     ctx, X, c = gp.ctx, getX(gp), getc(gp)
     d, n = size(X)
@@ -605,8 +610,8 @@ gθz_nllr(gp :: GPPContext, invK, Copt) =
 
 gθ_nllr(gp :: GPPContext) = gθ_nllr(gp, getKC(gp)\I, getCopt(gp))
 gθz_nllr(gp :: GPPContext) = gθz_nllr(gp, getKC(gp)\I, getCopt(gp))
-```
 
+#=
 And our finite difference check:
 
 ```{julia}
@@ -668,8 +673,8 @@ This means the code for the Hessian of the reduced NLL is a very small
 rearrangement of our code for the unreduced NLL.  In addition, we add
 a small tweak to deal with the case where we don't care about the
 derivatives with respect to $z = \log(\eta)$.
+=#
 
-```{julia}
 function Hθ_nllr(gp :: GPPContext; withz=true)
     ctx, X, y, s = gp.ctx, getX(gp), gety(gp), gp.η
     d, n = size(X)
@@ -740,8 +745,8 @@ function Hθ_nllr(gp :: GPPContext; withz=true)
 
     ϕ, g, H
 end
-```
 
+#=
 And the sanity check on a simple case.
 
 ```{julia}
@@ -881,7 +886,8 @@ reflector computation and application.  The following function
 overwrites $K$ and $y$ with the entries of $T$ (in the main diagonal
 and subdiagonal entries) $\tilde{y}$.
 
-```{julia}
+=#
+
 function tridiag_reduce!(K, y)
     n = length(y)
     for k = 1:n-2
@@ -892,10 +898,11 @@ function tridiag_reduce!(K, y)
         LinearAlgebra.reflectorApply!(x, τk, view(K, k+1:n, k+1:n)')
     end
 end
-```
 
+#=
 It's helpful to extract the parameters for the tridiagonal
-```{julia}
+=#
+
 function tridiag_params!(K, alpha, beta, s=0.0)
     n = size(K,1)
     for j = 1:n-1
@@ -914,12 +921,12 @@ function tridiag_params(K, s=0.0)
 end
 
 get_tridiag(K) = SymTridiagonal(tridiag_params(K)...)
-```
 
+#=
 And we want to be able to compute the Cholesky factorization in place
 and use it to solve linear systems and to
+=#
 
-```{julia}
 function cholesky_T!(alpha, beta)
     n = length(alpha)
     for j = 1:n-1
@@ -953,8 +960,8 @@ function cholesky_T_solve!(alpha, beta, y)
     cholesky_T_Rsolve!(alpha, beta, y)
     y
 end
-```
 
+#=
 The negative log likelihood in this case involves $\tr(K^{-1}) =
 \tr(T^{-1})$.  Given a Cholesky factorization $T = L^T L$, we have
 $$
@@ -979,8 +986,8 @@ $$\begin{aligned}
 \end{aligned}$$
 Running this recurrence backward and summing the $\|x_j\|^2$ gives us
 an $O(n)$ algorithm for computing $\tr(T^{-1})$
+=#
 
-```{julia}
 function cholesky_trinvT(alpha, beta)
     n = length(alpha)
     n2x = 1.0/alpha[n]^2
@@ -991,13 +998,13 @@ function cholesky_trinvT(alpha, beta)
     end
     n2xsum
 end
-```
 
+#=
 Putting this all together, we have the following code for computing
 the reduced negative log likelihood and its derivative after a
 tridiagonal reduction.
+=#
 
-```{julia}
 function nllrT!(T, y, s, alpha, beta, c)
     n = length(y)
     tridiag_params!(T, alpha, beta, s)
@@ -1026,8 +1033,8 @@ function nllrT(T, y, s)
     c = zeros(n)
     nllrT!(T, y, s, alpha, beta, c)
 end
-```
 
+#=
 Finally, we do a consistency check between our previous computations
 of the reduced NLL and the version based on tridiagonalization.
 
@@ -1087,8 +1094,8 @@ evaluations.  Therefore, we use an optimizer that starts with a brute
 force grid search (in $\log \eta$) to find a bracketing interval for a
 best guess at the global minimum over the range, and then does a few
 steps of secant iteration to refine the result.
+=#
 
-```{julia}
 function min_nllrT!(T, y, ηmin, ηmax, alpha, beta, c; nsamp=10, niter=5)
 
     # Sample on an initial grid
@@ -1124,11 +1131,11 @@ function min_nllrT!(T, y, ηmin, ηmax, alpha, beta, c; nsamp=10, niter=5)
 
     exp(b), nllrT!(T,y,exp(b),alpha,beta,c)...
 end
-```
 
+#=
 It's useful to use the GP context objects to wrap this up.
+=#
 
-```{julia}
 function tridiagonalize!(gp :: GPPContext)
     K = getK(gp)
     y = view(gp.scratch,1:gp.n,1)
@@ -1160,8 +1167,8 @@ function min_nllrT!(gp :: GPPContext, ηmin, ηmax;
                              nsamp=nsamp, niter=niter)
     change_kernel!(gp, gp.ctx, ηopt), ϕ, dϕ
 end
-```
 
+#=
 An example in this case is useful.
 
 ```{julia}
@@ -1250,3 +1257,4 @@ $$
 $$
 assuming that $z$ is free to move.  If $z$ is at one of the
 constraints, then we have just $H_{\gamma \gamma} u_\gamma = -g_\gamma$.
+=#

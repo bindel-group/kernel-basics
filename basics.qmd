@@ -27,6 +27,7 @@ include("_src/fdchecks.jl")
 include("_src/kfuns.jl")
 include("_src/kmats.jl")
 include("_src/gpp.jl")
+include("_src/hypers.jl")
 ```
 
 ::: {.content-hidden unless-format="html"}
@@ -73,7 +74,7 @@ The basic moving pieces are:
 
 {{< include _src/gpp.qmd >}}
 
-{{< include _hypers.qmd >}}
+{{< include _src/hypers.qmd >}}
 
 {{< include _acquisition.qmd >}}
 
