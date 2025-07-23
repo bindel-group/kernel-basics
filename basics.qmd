@@ -28,6 +28,7 @@ include("_src/kfuns.jl")
 include("_src/kmats.jl")
 include("_src/gpp.jl")
 include("_src/hypers.jl")
+include("_src/acquisition.jl")
 ```
 
 ::: {.content-hidden unless-format="html"}
@@ -76,6 +77,6 @@ The basic moving pieces are:
 
 {{< include _src/hypers.qmd >}}
 
-{{< include _acquisition.qmd >}}
+{{< include _src/acquisition.qmd >}}
 
 {{< include _bo_demo.qmd >}}

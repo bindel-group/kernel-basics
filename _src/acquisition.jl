@@ -1,3 +1,5 @@
+#ldoc on
+#=
 # Acquisition functions
 
 We are interested in optimizing some objective function $f$ via
@@ -22,8 +24,8 @@ $$\begin{aligned}
   H \sigma &= \frac{1}{2 \sigma} Hv -
   \frac{1}{4\sigma^3} (\nabla v) (\nabla v)^T
 \end{aligned}$$
+=#
 
-```{julia}
 function Hgx_αLCB(gp :: GPPContext, x :: AbstractVector, λ :: Float64)
     Copt = getCopt(gp)
     μ, gμ, Hμ = mean(gp, x), gx_mean(gp, x), Hx_mean(gp, x)
@@ -35,6 +37,8 @@ function Hgx_αLCB(gp :: GPPContext, x :: AbstractVector, λ :: Float64)
     α, gα, Hα
 end
 
+#=
+```{julia}
 let
     Zk, y = test_setup2d((x,y)->x^2+y)
     gp = GPPContext(KernelSE{2}(0.5), 1e-8, Zk, y)
@@ -168,8 +172,8 @@ $$\begin{aligned}
 \psi_{NLG}''(z) &= \frac{-\phi(z) G(z) + Q(z)^2}{G(z)^2}
 \end{aligned}$$
 We implement these formulas as "version zero" of the computation.
+=#
 
-```{julia}
 function DψNLG0(z)
     ϕz = normpdf(z)
     Qz = normccdf(z)
@@ -180,6 +184,8 @@ function DψNLG0(z)
     ψz, dψz, Hψz
 end
 
+#=
+```{julia}
 let
     z = 0.123
     @test DψNLG0(z)[2] ≈ diff_fd(z->DψNLG0(z)[1], z) rtol=1e-6
@@ -210,8 +216,8 @@ $$
 $$
 where erfcx is the scaled complementary error function (assuming one
 has a library of special functions that includes erfcx).
+=#
 
-```{julia}
 function DψNLG1(z)
     Rz = sqrt(π/2)*erfcx(z/√2)
     Hz = 1-z*Rz
@@ -221,6 +227,8 @@ function DψNLG1(z)
     ψz, dψz, Hψz
 end
 
+#=
+```{julia}
 let
     z = 0.123
     z1 = 30.456
@@ -253,8 +261,8 @@ H(z) &= W(z) R(z) \\
 \psi_{NLG}'(z) &= W(z)^{-1} \\
 \psi_{NLG}''(z) &= \frac{1-W(z)(z+W(z))}{W(z)^2}.
 \end{aligned}$$
+=#
 
-```{julia}
 function DψNLG2(z)
 
     # Approximate W by 20th convergent
@@ -270,6 +278,8 @@ function DψNLG2(z)
     ψz, dψz, Hψz
 end
 
+#=
+```{julia}
 let
     z = 5.23
     @test DψNLG0(z)[1] ≈ DψNLG2(z)[1]
@@ -289,10 +299,13 @@ approximation --- the point of getting the tails right is really to
 give us enough information to climb out of the flat regions for EI.
 
 Putting everything together, we have
-```{julia}
+=#
+
 # By z = 6, a 20-term convergent of the rational approx is plenty
 DψNLG(z) = if z < 6.0 DψNLG0(z) else DψNLG2(z) end
 
+#=
+```{julia}
 let
     zs = range(-20, 20, step=1e-3)
     ψzs = [DψNLG(z)[1] for z in zs]
@@ -362,8 +375,8 @@ H u &=
 \frac{\nabla v}{v} \frac{(\nabla v)^T}{v} -
 \frac{H v}{v} \right).
 \end{aligned}$$
+=#
 
-```{julia}
 function Hgx_u(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
     Copt = getCopt(gp)
     μ, gμ, Hμ = mean(gp, x), gx_mean(gp, x), Hx_mean(gp, x)
@@ -378,44 +391,22 @@ function Hgx_u(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
     Hu = Hμs - 0.5*(gμs*gvs' + gvs*gμs') + 0.5*u*(1.5*gvs*gvs' - Hvs)
     u, gu, Hu
 end
-```
 
-Since we have several functions coming with a similar signature, we
-put together a common tester.
-
-```{julia}
-function check_derivs3_NLEI(f)
-    Zk, y = test_setup2d((x,y)->x^2+y)
-    gp = GPPContext(KernelSE{2}(0.5), 1e-8, Zk, y)
-    z = [0.47; 0.47]
-    dz = randn(2)
-    fopt = -0.1
-    g(s)  = f(gp, z+s*dz, fopt)[1]
-    dg(s) = f(gp, z+s*dz, fopt)[2]
-    Hg(s) = f(gp, z+s*dz, fopt)[3]
-    @test dg(0)'*dz ≈ diff_fd(g) rtol=1e-6
-    @test Hg(0)*dz ≈ diff_fd(dg) rtol=1e-6
-end
-
-check_derivs3_NLEI(Hgx_u)
-```
-
+#=
 The derivatives of $\psi(u)$ are
 $$\begin{aligned}
   \nabla \psi &= \psi'(u) \nabla u \\
   H \psi &= \psi''(u) \nabla u (\nabla u)^T + \psi'(u) H u.
 \end{aligned}$$
+=#
 
-```{julia}
 function Hgx_ψNLG(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
     u, gu, Hu = Hgx_u(gp, x, fopt)
     ψ, dψ, Hψ = DψNLG(u)
     ψ, dψ*gu, Hψ*gu*gu' + dψ*Hu
 end
 
-check_derivs3_NLEI(Hgx_ψNLG)
-```
-
+#=
 Getting to the actual acquisition function, we note that
 $$
 \alpha_{NLEI} = -\log \alpha_{EI} = -\frac{1}{2} \log v + \psi_{NLG}(u)
@@ -427,8 +418,8 @@ $$\begin{aligned}
 -\frac{1}{2} \frac{Hv}{v}
 + \frac{1}{2} \frac{\nabla v}{v} \frac{(\nabla v)^T}{v}.
 \end{aligned}$$
+=#
 
-```{julia}
 function Hgx_αNLEI0(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
     Copt = getCopt(gp)
     v, gv, Hv = Copt*var(gp, x), Copt*gx_var(gp, x), Copt*Hx_var(gp, x)
@@ -442,13 +433,11 @@ function Hgx_αNLEI0(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
     -0.5*Hvs + 0.5*gvs*gvs' + Hψ*gu*gu' + dψ*Hu
 end
 
-check_derivs3_NLEI(Hgx_αNLEI0)
-```
-
+#=
 And we finally put everything together by combining all the algebra
 above.
+=#
 
-```{julia}
 function Hgx_αNLEI(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
     Copt = getCopt(gp)
     μ, gμ, Hμ = mean(gp, x), gx_mean(gp, x), Hx_mean(gp, x)
@@ -470,5 +459,27 @@ function Hgx_αNLEI(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
     α, dα, Hα
 end
 
+#=
+Since we have several functions coming with a similar signature, we
+put together a common tester.
+
+```{julia}
+function check_derivs3_NLEI(f)
+    Zk, y = test_setup2d((x,y)->x^2+y)
+    gp = GPPContext(KernelSE{2}(0.5), 1e-8, Zk, y)
+    z = [0.47; 0.47]
+    dz = randn(2)
+    fopt = -0.1
+    g(s)  = f(gp, z+s*dz, fopt)[1]
+    dg(s) = f(gp, z+s*dz, fopt)[2]
+    Hg(s) = f(gp, z+s*dz, fopt)[3]
+    @test dg(0)'*dz ≈ diff_fd(g) rtol=1e-6
+    @test Hg(0)*dz ≈ diff_fd(dg) rtol=1e-6
+end
+
+check_derivs3_NLEI(Hgx_u)
+check_derivs3_NLEI(Hgx_ψNLG)
+check_derivs3_NLEI(Hgx_αNLEI0)
 check_derivs3_NLEI(Hgx_αNLEI)
 ```
+=#

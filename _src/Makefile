@@ -1,5 +1,14 @@
-SRC=sample.jl fdchecks.jl kfuns.jl kmats.jl gpp.jl hypers.jl
+SRC=	sample.jl \
+	fdchecks.jl \
+	kfuns.jl \
+	kmats.jl \
+	gpp.jl \
+	hypers.jl \
+	acquisition.jl
+
 QMD=$(SRC:.jl=.qmd)
+
+.PHONY: all clean distclean
 
 all: ${QMD}
 
@@ -7,4 +16,7 @@ all: ${QMD}
 	lua ldoc.lua -p quarto -highlight julia $< -o $@
 
 clean:
+	rm -f *~
+
+distclean: clean
 	rm -f sample.qmd
