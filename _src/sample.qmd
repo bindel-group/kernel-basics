@@ -16,7 +16,10 @@ sequences that gives some of the relevant background and recommends a
 fairly effective sampler based on Kronecker sequences.  We provide
 some Julia code for this below.
 
-```{julia}
+[kronecker-lds-blog]: https://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
+
+
+```{.julia}
 """
     kronecker_quasirand(d, N, start=0)
 
@@ -44,9 +47,8 @@ function kronecker_quasirand(d, N, start=0)
 
     Z
 end
-```
 
-[kronecker-lds-blog]: https://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
+```
 
 A 2D plot shows the difference between using random samples and the
 low-discrepancy sequence.
@@ -61,3 +63,4 @@ let
     plot(p1, p2, layout = @layout [a b])
 end
 ```
+

@@ -13,12 +13,16 @@ format:
 
 ```{julia}
 #| echo: false
+#| output: false
 using LinearAlgebra
 using Plots
 using Random
 using StatsFuns
 using SpecialFunctions
 using Optim
+
+include("_src/sample.jl")
+include("_src/fdchecks.jl")
 ```
 
 ::: {.content-hidden unless-format="html"}
@@ -55,9 +59,9 @@ The basic moving pieces are:
 - Optimization of acquisition functions
 - Additional numerical tricks
 
-{{< include _sample.qmd >}}
+{{< include _src/sample.qmd >}}
 
-{{< include _fdchecks.qmd >}}
+{{< include _src/fdchecks.qmd >}}
 
 {{< include _kfuns.qmd >}}
 
