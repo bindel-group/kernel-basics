@@ -82,5 +82,6 @@ The basic moving pieces are:
 {{< include _ldoc/hypers.qmd >}}
 
 {{< include _ldoc/acquisition.qmd >}}
+{{< include _ldoc/test_acquisition.qmd >}}
 
 {{< include _ldoc/bo_step.qmd >}}

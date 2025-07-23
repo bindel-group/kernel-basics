@@ -38,21 +38,6 @@ function Hgx_αLCB(gp :: GPPContext, x :: AbstractVector, λ :: Float64)
 end
 
 #=
-```{julia}
-let
-    Zk, y = test_setup2d((x,y)->x^2+y)
-    gp = GPPContext(KernelSE{2}(0.5), 1e-8, Zk, y)
-    z = [0.47; 0.47]
-    dz = randn(2)
-    λ = 2.3
-    g(s)  = Hgx_αLCB(gp, z+s*dz, λ)[1]
-    dg(s) = Hgx_αLCB(gp, z+s*dz, λ)[2]
-    Hg(s) = Hgx_αLCB(gp, z+s*dz, λ)[3]
-    @test dg(0)'*dz ≈ diff_fd(g) rtol=1e-6
-    @test Hg(0)*dz ≈ diff_fd(dg) rtol=1e-6
-end
-```
-
 ## Expected improvement
 
 We will follow the usual perspective of deriving expected improvement
@@ -185,14 +170,6 @@ function DψNLG0(z)
 end
 
 #=
-```{julia}
-let
-    z = 0.123
-    @test DψNLG0(z)[2] ≈ diff_fd(z->DψNLG0(z)[1], z) rtol=1e-6
-    @test DψNLG0(z)[3] ≈ diff_fd(z->DψNLG0(z)[2], z) rtol=1e-6
-end
-```
-
 If we believe our model, we are unlikely to have to evaluate
 $\psi_{NLG}$ for very large arguments.  Such an occurrence would mean
 a very poorly calibrated model!  Nonetheless, very poor calibration
@@ -228,20 +205,6 @@ function DψNLG1(z)
 end
 
 #=
-```{julia}
-let
-    z = 0.123
-    z1 = 30.456
-    @test DψNLG0(z)[1] ≈ DψNLG1(z)[1]
-    @test DψNLG0(z)[2] ≈ DψNLG1(z)[2]
-    @test DψNLG0(z)[3] ≈ DψNLG1(z)[3]
-    @test DψNLG1(z)[2] ≈ diff_fd(z->DψNLG1(z)[1], z) rtol=1e-6
-    @test DψNLG1(z)[3] ≈ diff_fd(z->DψNLG1(z)[2], z) rtol=1e-6
-    @test DψNLG1(z1)[2] ≈ diff_fd(z->DψNLG1(z)[1], z1, h=1e-4) rtol=1e-6
-    @test DψNLG1(z1)[3] ≈ diff_fd(z->DψNLG1(z)[2], z1, h=1e-4) rtol=1e-6
-end
-```
-
 Were we unwilling to find a library for computing the scaled
 complementary error function, another approach would be to use
 Laplace's continued fraction expansion for the Mills ratio:
@@ -279,15 +242,6 @@ function DψNLG2(z)
 end
 
 #=
-```{julia}
-let
-    z = 5.23
-    @test DψNLG0(z)[1] ≈ DψNLG2(z)[1]
-    @test DψNLG0(z)[2] ≈ DψNLG2(z)[2]
-    @test DψNLG0(z)[3] ≈ DψNLG2(z)[3]
-end
-```
-
 The continued fraction doesn't converge super-fast, but that is almost
 surely fine for what we're doing here.  By $z$ values of 5 or so, 20
 terms is quite adequate to get good accuracy --- and this version does
@@ -458,28 +412,3 @@ function Hgx_αNLEI(gp :: GPPContext, x :: AbstractVector, fopt :: Float64)
 
     α, dα, Hα
 end
-
-#=
-Since we have several functions coming with a similar signature, we
-put together a common tester.
-
-```{julia}
-function check_derivs3_NLEI(f)
-    Zk, y = test_setup2d((x,y)->x^2+y)
-    gp = GPPContext(KernelSE{2}(0.5), 1e-8, Zk, y)
-    z = [0.47; 0.47]
-    dz = randn(2)
-    fopt = -0.1
-    g(s)  = f(gp, z+s*dz, fopt)[1]
-    dg(s) = f(gp, z+s*dz, fopt)[2]
-    Hg(s) = f(gp, z+s*dz, fopt)[3]
-    @test dg(0)'*dz ≈ diff_fd(g) rtol=1e-6
-    @test Hg(0)*dz ≈ diff_fd(dg) rtol=1e-6
-end
-
-check_derivs3_NLEI(Hgx_u)
-check_derivs3_NLEI(Hgx_ψNLG)
-check_derivs3_NLEI(Hgx_αNLEI0)
-check_derivs3_NLEI(Hgx_αNLEI)
-```
-=#
