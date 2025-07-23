@@ -4,7 +4,8 @@ SRC=	sample.jl \
 	kmats.jl \
 	gpp.jl \
 	hypers.jl \
-	acquisition.jl
+	acquisition.jl \
+	bo_step.jl
 
 QMD=$(SRC:.jl=.qmd)
 

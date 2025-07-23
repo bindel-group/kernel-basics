@@ -1,11 +1,13 @@
+#ldoc on
+#=
 # BO loop
 
 The basis of our BO loop is repeated optimization of the acquisition
 function (in our case log-EI) over the domain.  We use the
 interior-point Newton solver from `Optim.jl` as our basic optimizer.
 We are not being overly careful about performance, at least for now.
+=#
 
-```{julia}
 function optimize_EI(gp :: GPPContext, x0 :: AbstractVector,
                      lo :: AbstractVector, hi :: AbstractVector)
     fopt = minimum(gety(gp))
@@ -16,12 +18,12 @@ function optimize_EI(gp :: GPPContext, x0 :: AbstractVector,
     dfc = TwiceDifferentiableConstraints(lo, hi)
     res = optimize(df, dfc, x0, IPNewton())
 end
-```
 
+#=
 We will generally do a multi-start solver to find a good solution.
 For simplicity, we'll use random starts for the moment.
+=#
 
-```{julia}
 function optimize_EI(gp :: GPPContext,
                      lo :: AbstractVector, hi :: AbstractVector;
                      nstarts = 10, verbose=true)
@@ -40,8 +42,8 @@ function optimize_EI(gp :: GPPContext,
     end
     bestα, bestx
 end
-```
 
+#=
 Now we do a simple BO loop.  We don't bother to tune the length scale
 or the noise variance in this case, but of course we automatically
 tune the diagonal variance.
@@ -62,3 +64,4 @@ let
     println("Best found: $(minimum(gety(gp)))")
 end
 ```
+=#
