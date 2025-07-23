@@ -15,3 +15,4 @@ include("bo_step.jl")
 
 include("test_kfuns.jl")
 include("test_kmats.jl")
+include("test_gpp.jl")

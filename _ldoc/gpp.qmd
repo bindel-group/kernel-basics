@@ -207,9 +207,6 @@ end
 
 ```
 
-Straightforward or not, we will stick with the habit of including a
-finite difference check.
-
 ## Predictive variance
 
 The predictive variance is a little less straighforward than the
@@ -286,56 +283,11 @@ end
 
 ```
 
-## Testing
+## Demo
 
-And, as usual, we have some tests.  First, we check adding and
-removing points and changing the kernel.
-
-```{julia}
-@testset "Update points and kernel in GPPContext" begin
-    testf(x,y) = x^2+y
-    Zk, y = test_setup2d(testf)
-    ctx = KernelSE{2}(1.0)
-    ctx2 = KernelSE{2}(0.8)
-
-    gp1 = GPPContext(ctx, 0.0, Zk, y)
-    gpt = GPPContext(ctx, 0.0, 10)
-    gpt = add_points!(gpt, Zk, y)
-    @test getc(gpt) ≈ getc(gp1)
-
-    gp2 = GPPContext(ctx2, 0.0, Zk, y)
-    gpt = change_kernel!(gpt, ctx2, 0.0)
-    @test getc(gpt) ≈ getc(gp2)
-    gpt = change_kernel!(gpt, ctx, 0.0)
-
-    gpt = remove_points!(gpt, 2)
-    gp3 = GPPContext(ctx, 0.0, Zk[:,1:end-2], y[1:end-2])
-    @test getc(gpt) ≈ getc(gp3)
-
-    gpt = add_points!(gpt, Zk[:,end-1:end], y[end-1:end])
-    @test getc(gpt) ≈ getc(gp1)
-end
-nothing
-```
-
-And now we check consistency of the predictive mean and variance and
-their derivatives.
-
-```{julia}
-@testset "Predictive mean and variance derivatives" begin
-    Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y))
-    z, dz = [0.47; 0.47], [0.132; 0.0253]
-    gp = GPPContext(KernelSE{2}(0.5), 1e-8, Zk, y)
-    @test gx_mean(gp,z)'*dz ≈ diff_fd(s->mean(gp,z+s*dz))    rtol=1e-6
-    @test Hx_mean(gp,z)*dz  ≈ diff_fd(s->gx_mean(gp,z+s*dz)) rtol=1e-6
-    @test gx_var(gp,z)'*dz  ≈ diff_fd(s->var(gp,z+s*dz))     rtol=1e-6
-    @test Hx_var(gp,z)*dz   ≈ diff_fd(s->gx_var(gp,z+s*dz))  rtol=1e-6
-end
-nothing
-```
-
-Now we check that the predictive mean and variance agree with our
-earlier calculations without the GPP context object.
+We did an earlier demo of the basic subroutines for computing a GP
+predictive mean and variance; now let's do the same demo with the
+`GPPContext` object.
 
 ```{julia}
 let

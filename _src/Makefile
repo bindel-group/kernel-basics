@@ -7,7 +7,8 @@ QMD=	../_ldoc/testing.qmd \
 	../_ldoc/acquisition.qmd \
 	../_ldoc/bo_step.qmd \
 	../_ldoc/test_kfuns.qmd \
-	../_ldoc/test_kmats.qmd
+	../_ldoc/test_kmats.qmd \
+	../_ldoc/test_gpp.qmd
 
 ../_ldoc/%.qmd: %.jl
 	lua ldoc.lua -p quarto -highlight julia $< -o $@

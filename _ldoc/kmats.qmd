@@ -252,34 +252,12 @@ kernel_cholesky(ctx :: KernelContext, X :: AbstractMatrix, s :: Real) =
 
 ```
 
-It is also useful to have a convenience function for evaluating a
-function at a set of sample points in order to compute weights:
-
-```{.julia}
-sample_eval(f, X :: AbstractMatrix) = [f(x) for x in eachcol(X)]
-sample_eval2(f, X :: AbstractMatrix) = [f(x...) for x in eachcol(X)]
-
-```
-
-Because we will frequently run examples with a low-discrepancy
-sampling sequence, we put together something for that as well
-```{julia}
-function test_setup2d(f, n)
-    Zk = kronecker_quasirand(2,n)
-    y = sample_eval2(f, Zk)
-    Zk, y
-end
-
-test_setup2d(f) = test_setup2d(f,10)
-```
-
 We are now set to evaluate the posterior mean and standard deviation
 for a GP at a new point.  We will use one auxiliary vector here (this
 could be passed in if we wanted).  Note that once we have computed the
 mean field, we no longer really need $k_{Xz}$, only the piece of the
 Cholesky factor ($r_{Xz} = L_{XX}^{-1} k_{Xz}$).  Therefore we will
 use the overwriting version of the triangular solver.
-
 
 ```{.julia}
 function eval_GP(KC :: Cholesky, ctx :: KernelContext, X :: AbstractMatrix,

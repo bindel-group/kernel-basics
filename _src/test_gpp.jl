@@ -1,0 +1,42 @@
+#ldoc on
+#=
+## Testing
+
+For unit testing, we need to check our ability to update points and
+the kernel, and the consistency of the predictive mean and variance
+with purported derivative computations.
+=#
+
+@testset "Update points and kernel in GPPContext" begin
+    testf(x,y) = x^2+y
+    Zk, y = test_setup2d(testf)
+    ctx = KernelSE{2}(1.0)
+    ctx2 = KernelSE{2}(0.8)
+
+    gp1 = GPPContext(ctx, 0.0, Zk, y)
+    gpt = GPPContext(ctx, 0.0, 10)
+    gpt = add_points!(gpt, Zk, y)
+    @test getc(gpt) ≈ getc(gp1)
+
+    gp2 = GPPContext(ctx2, 0.0, Zk, y)
+    gpt = change_kernel!(gpt, ctx2, 0.0)
+    @test getc(gpt) ≈ getc(gp2)
+    gpt = change_kernel!(gpt, ctx, 0.0)
+
+    gpt = remove_points!(gpt, 2)
+    gp3 = GPPContext(ctx, 0.0, Zk[:,1:end-2], y[1:end-2])
+    @test getc(gpt) ≈ getc(gp3)
+
+    gpt = add_points!(gpt, Zk[:,end-1:end], y[end-1:end])
+    @test getc(gpt) ≈ getc(gp1)
+end
+
+@testset "Predictive mean and variance derivatives" begin
+    Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y))
+    z, dz = [0.47; 0.47], [0.132; 0.0253]
+    gp = GPPContext(KernelSE{2}(0.5), 1e-8, Zk, y)
+    @test gx_mean(gp,z)'*dz ≈ diff_fd(s->mean(gp,z+s*dz))    rtol=1e-6
+    @test Hx_mean(gp,z)*dz  ≈ diff_fd(s->gx_mean(gp,z+s*dz)) rtol=1e-6
+    @test gx_var(gp,z)'*dz  ≈ diff_fd(s->var(gp,z+s*dz))     rtol=1e-6
+    @test Hx_var(gp,z)*dz   ≈ diff_fd(s->gx_var(gp,z+s*dz))  rtol=1e-6
+end

@@ -22,6 +22,25 @@ direction.
 Compute a centered difference estimate of f'(x) with step size h.
 """
 diff_fd(f, x=0.0; h=1e-6) = (f(x+h)-f(x-h))/(2h)
+
+```
+
+It is useful to have a convenience function for evaluating a function
+at a set of sample points in order to compute weights.  We will also
+frequently run examples with a low-discrepancy sampling sequence, and
+so we put together some infrastructure for this as well.
+
+```{.julia}
+sample_eval(f, X :: AbstractMatrix) = [f(x) for x in eachcol(X)]
+sample_eval2(f, X :: AbstractMatrix) = [f(x...) for x in eachcol(X)]
+
+function test_setup2d(f, n)
+    Zk = kronecker_quasirand(2,n)
+    y = sample_eval2(f, Zk)
+    Zk, y
+end
+
+test_setup2d(f) = test_setup2d(f,10)
 ```
 
 
