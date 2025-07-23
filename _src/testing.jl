@@ -1,0 +1,26 @@
+#ldoc on
+#=
+# Testing infrastructure
+
+When writing code, it is helpful to write lots of unit tests, and
+Julia has an excellent [unit testing infrastructure][testjl] to
+support this.  During the process of development, I usually write
+tests embedded with the code that I am developing.  As I become more
+confident, I move the tests into a separate test suite file (or files).
+
+[testjl]: https://docs.julialang.org/en/v1/stdlib/Test/
+
+It is also useful to write tests when doing mathematical derivations
+(e.g. checking that we have done the algebra for differentiation
+correctly by comparing against a finite difference approximation).
+For testing derivatives for functions of several variables, it is
+usually sufficient to check the directional derivative in a random
+direction.
+=#
+
+"""
+    diff_fd(f, x=0.0; h=1e-6)
+
+Compute a centered difference estimate of f'(x) with step size h.
+"""
+diff_fd(f, x=0.0; h=1e-6) = (f(x+h)-f(x-h))/(2h)

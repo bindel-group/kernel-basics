@@ -1,0 +1,30 @@
+using Test
+using LinearAlgebra
+
+include("sample.jl")
+include("kfuns.jl")
+include("kmats.jl")
+
+#ldoc on
+#=
+## Testing
+=#
+
+@testset "Compare kernel matrix constructors" begin
+    Zk = kronecker_quasirand(2,10)
+    k = KernelSE{2}(1.0)
+
+    # Comprehension-based eval
+    KXX1 = [k(x,y) for x in eachcol(Zk), y in eachcol(Zk)]
+    KXz1 = [k(x,Zk[:,1]) for x in eachcol(Zk)]
+
+    # Dispatch through call mechanism
+    KXX2 = k(Zk)
+    KXX3 = k(Zk, Zk)
+    KXz2 = k(Zk, Zk[:,1])
+
+    @test KXX1 ≈ KXX2
+    @test KXX1 ≈ KXX3
+    @test KXz1 ≈ KXX1[:,1]
+    @test KXz2 ≈ KXX1[:,1]
+end

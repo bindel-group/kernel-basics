@@ -1,20 +1,26 @@
-SRC=	sample.jl \
-	fdchecks.jl \
+SRC=	testing.jl \
+	sample.jl \
 	kfuns.jl \
 	kmats.jl \
 	gpp.jl \
 	hypers.jl \
 	acquisition.jl \
-	bo_step.jl
+	bo_step.jl \
+	test_kfuns.jl \
+	test_kmats.jl
 
 QMD=$(SRC:.jl=.qmd)
 
-.PHONY: all clean distclean
+%.qmd: %.jl
+	lua ldoc.lua -p quarto -highlight julia $< -o $@
+
+.PHONY: all test clean distclean
 
 all: ${QMD}
 
-%.qmd: %.jl
-	lua ldoc.lua -p quarto -highlight julia $< -o $@
+test:
+	julia test_kfuns.jl
+	julia test_kmats.jl
 
 clean:
 	rm -f *~

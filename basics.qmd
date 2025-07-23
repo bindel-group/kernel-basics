@@ -1,7 +1,7 @@
 ---
 title: Kernels and BO in Julia
 author: David Bindel
-date: 2025-06-19
+date: 2025-07-23
 jupyter: julia-1.11
 format:
   html:
@@ -22,8 +22,8 @@ using SpecialFunctions
 using Optim
 using Test
 
+include("_src/testing.jl")
 include("_src/sample.jl")
-include("_src/fdchecks.jl")
 include("_src/kfuns.jl")
 include("_src/kmats.jl")
 include("_src/gpp.jl")
@@ -50,11 +50,11 @@ $$
 
 Given that there are several of us working on kernel methods and
 Bayesian optimization at the moment, it seems worth giving a
-bare-bones treatment of the computational pieces.  We will make some
-effort to be at least a little efficient and to show off how to use
-the Julia language effectively, but will not worry too much about all
-the details, nor will we try to make this as efficient as at all
-possible.
+bare-bones treatment of the computational pieces.  This is also an
+opportunity for me to write about using Julia efficiently (though we
+will not worry too much about all the details, nor will we try to
+overly optimize the implementation).  And this is an opportunity to write
+about my current software philosophy.
 
 The basic moving pieces are:
 
@@ -66,13 +66,15 @@ The basic moving pieces are:
 - Optimization of acquisition functions
 - Additional numerical tricks
 
+{{< include _src/testing.qmd >}}
+
 {{< include _src/sample.qmd >}}
 
-{{< include _src/fdchecks.qmd >}}
-
 {{< include _src/kfuns.qmd >}}
+{{< include _src/test_kfuns.qmd >}}
 
 {{< include _src/kmats.qmd >}}
+{{< include _src/test_kmats.qmd >}}
 
 {{< include _src/gpp.qmd >}}
 

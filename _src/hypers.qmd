@@ -89,7 +89,7 @@ let
     invAδA, invAΔA, invAΔδA = A0\δA, A0\ΔA, A0\ΔδA
     ΔδinvA = (invAδA*invAΔA + invAΔA*invAδA - invAΔδA)/A0
 
-    @test δinv(A0,δA) ≈ diff_fd(inv,A0,δA) rtol=1e-6
+    @test δinv(A0,δA) ≈ diff_fd(s->inv(A0+s*δA)) rtol=1e-6
     @test ΔδinvA ≈ diff_fd(s->δinv(A0+s*ΔA, δA+s*ΔδA)) rtol=1e-6
 end
 ```

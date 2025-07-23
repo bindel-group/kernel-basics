@@ -5,11 +5,9 @@
 Now we would like code to compute kernel matrices $K_{XY}$ (and
 vectors of kernel evaluations $k_{Xz}$).  Julia allows us to do this
 concisely using *comprehensions*:
-```{julia}
-kernel0(k :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
-    [k(x,y) for x in eachcol(X), y in eachcol(Y)]
-kernel0(k :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
-    [k(x,z) for x in eachcol(X)]
+```{.julia}
+KXY = [k(x,y) for x in eachcol(X), y in eachcol(Y)]
+KXz = [k(x,z) for x in eachcol(X)]
 ```
 
 There are two minor drawbacks to forming kernel matrices this way.
@@ -68,30 +66,6 @@ kernel(k :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
 
 ```
 
-It's always useful to sanity check that these computations are done
-correctly, or at least that there is internal consistency between the versions:
-```{julia}
-@testset "Compare kernel matrix constructors" begin
-    Zk = kronecker_quasirand(2,10)
-    k = KernelSE{2}(1.0)
-
-    # Comprehension-based eval
-    KXX1 = kernel0(k, Zk, Zk)
-    KXz1 = kernel0(k, Zk, Zk[:,1])
-
-    # Dispatch through call mechanism
-    KXX2 = k(Zk)
-    KXX3 = k(Zk, Zk)
-    KXz2 = k(Zk, Zk[:,1])
-
-    @test KXX1 ≈ KXX2
-    @test KXX1 ≈ KXX3
-    @test KXz1 ≈ KXX1[:,1]
-    @test KXz2 ≈ KXX1[:,1]
-end
-nothing
-```
-
 We note that apart from allocations in the initial compilation, every
 version of the kernel matrix and vector evaluations does a minimal
 amount of memory allocation: two allocations for the versions that
@@ -104,8 +78,10 @@ let
     Ktemp = zeros(10,10)
     Kvtemp = zeros(10)
     Zk1 = Zk[:,1]
-    KXX1 = @time kernel0(k, Zk, Zk)
-    KXz1 = @time kernel0(k, Zk, Zk1)
+    KXX0(X)   = [k(x,y) for x in eachcol(X), y in eachcol(X)]
+    KXz0(X,z) = [k(x,z) for x in eachcol(X)]
+    KXX1 = @time KXX0(Zk)
+    KXz1 = @time KXz0(Zk, Zk1)
     KXX2 = @time kernel!(Ktemp, k, Zk)
     KXX3 = @time kernel!(Ktemp, k, Zk, Zk)
     KXz2 = @time kernel!(Kvtemp, k, Zk, Zk1)
