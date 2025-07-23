@@ -44,8 +44,8 @@ let
     g(s)  = Hgx_αLCB(gp, z+s*dz, λ)[1]
     dg(s) = Hgx_αLCB(gp, z+s*dz, λ)[2]
     Hg(s) = Hgx_αLCB(gp, z+s*dz, λ)[3]
-    check_fd(dg(0)'*dz, g, 0.0),
-    check_fd(Hg(0)*dz, dg, 0.0)
+    @test dg(0)'*dz ≈ diff_fd(g) rtol=1e-6
+    @test Hg(0)*dz ≈ diff_fd(dg) rtol=1e-6
 end
 ```
 
@@ -123,8 +123,8 @@ let
     G(z) = normpdf(z) - z*normccdf(z)
     dG(z) = -normccdf(z)
     HG(z) = normpdf(z)
-    check_fd(dG(z), G, z),
-    check_fd(HG(z), dG, z)
+    @test dG(z) ≈ diff_fd(G,z) rtol=1e-6
+    @test HG(z) ≈ diff_fd(dG,z) rtol=1e-6
 end
 ```
 
@@ -182,8 +182,8 @@ end
 
 let
     z = 0.123
-    check_fd(DψNLG0(z)[2], z->DψNLG0(z)[1], z),
-    check_fd(DψNLG0(z)[3], z->DψNLG0(z)[2], z)
+    @test DψNLG0(z)[2] ≈ diff_fd(z->DψNLG0(z)[1], z) rtol=1e-6
+    @test DψNLG0(z)[3] ≈ diff_fd(z->DψNLG0(z)[2], z) rtol=1e-6
 end
 ```
 
@@ -224,14 +224,13 @@ end
 let
     z = 0.123
     z1 = 30.456
-    max(check_approx(DψNLG0(z)[1], DψNLG1(z)[1]),
-        check_approx(DψNLG0(z)[2], DψNLG1(z)[2]),
-        check_approx(DψNLG0(z)[3], DψNLG1(z)[3]),
-        check_fd(DψNLG1(z)[2], z->DψNLG1(z)[1], z),
-        check_fd(DψNLG1(z)[3], z->DψNLG1(z)[2], z)),
-    max(check_fd(DψNLG1(z1)[2], z->DψNLG1(z)[1], z1, h=1e-4),
-        check_fd(DψNLG1(z1)[3], z->DψNLG1(z)[2], z1, h=1e-4))
-
+    @test DψNLG0(z)[1] ≈ DψNLG1(z)[1]
+    @test DψNLG0(z)[2] ≈ DψNLG1(z)[2]
+    @test DψNLG0(z)[3] ≈ DψNLG1(z)[3]
+    @test DψNLG1(z)[2] ≈ diff_fd(z->DψNLG1(z)[1], z) rtol=1e-6
+    @test DψNLG1(z)[3] ≈ diff_fd(z->DψNLG1(z)[2], z) rtol=1e-6
+    @test DψNLG1(z1)[2] ≈ diff_fd(z->DψNLG1(z)[1], z1, h=1e-4) rtol=1e-6
+    @test DψNLG1(z1)[3] ≈ diff_fd(z->DψNLG1(z)[2], z1, h=1e-4) rtol=1e-6
 end
 ```
 
@@ -273,9 +272,9 @@ end
 
 let
     z = 5.23
-    check_approx(DψNLG0(z)[1], DψNLG2(z)[1]),
-    check_approx(DψNLG0(z)[2], DψNLG2(z)[2]),
-    check_approx(DψNLG0(z)[3], DψNLG2(z)[3])
+    @test DψNLG0(z)[1] ≈ DψNLG2(z)[1]
+    @test DψNLG0(z)[2] ≈ DψNLG2(z)[2]
+    @test DψNLG0(z)[3] ≈ DψNLG2(z)[3]
 end
 ```
 
@@ -394,8 +393,8 @@ function check_derivs3_NLEI(f)
     g(s)  = f(gp, z+s*dz, fopt)[1]
     dg(s) = f(gp, z+s*dz, fopt)[2]
     Hg(s) = f(gp, z+s*dz, fopt)[3]
-    check_fd(dg(0)'*dz, g, 0.0),
-    check_fd(Hg(0)*dz, dg, 0.0)
+    @test dg(0)'*dz ≈ diff_fd(g) rtol=1e-6
+    @test Hg(0)*dz ≈ diff_fd(dg) rtol=1e-6
 end
 
 check_derivs3_NLEI(Hgx_u)

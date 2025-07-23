@@ -90,7 +90,7 @@ kernel(ctx :: KernelContext, X :: AbstractMatrix, s :: Real) =
 It's always useful to sanity check that these computations are done
 correctly, or at least that there is internal consistency between the versions:
 ```{julia}
-let
+@testset "Compare kernel matrix constructors" begin
     Zk = kronecker_quasirand(2,10)
     k = KernelSE{2}(1.0)
 
@@ -103,11 +103,12 @@ let
     KXX3 = k(Zk, Zk)
     KXz2 = k(Zk, Zk[:,1])
 
-    norm(KXX1-KXX2)/norm(KXX1),
-    norm(KXX1-KXX3)/norm(KXX1),
-    norm(KXz1-KXX1[:,1])/norm(KXX1[:,1]),
-    norm(KXz2-KXX1[:,1])/norm(KXX1[:,1])
+    @test KXX1 ≈ KXX2
+    @test KXX1 ≈ KXX3
+    @test KXz1 ≈ KXX1[:,1]
+    @test KXz2 ≈ KXX1[:,1]
 end
+nothing
 ```
 
 We note that apart from allocations in the initial compilation, every
@@ -416,7 +417,9 @@ let
     μz, σz = eval_GP(KC, ctx, Zk, c, z)
 
     # Relative error in computed stddev
-    abs( (σz-Kstorage[11,11])/σz )
+    @test σz ≈ Kstorage[11,11]
+
+    nothing
 end
 ```
 

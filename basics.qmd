@@ -20,6 +20,7 @@ using Random
 using StatsFuns
 using SpecialFunctions
 using Optim
+using Test
 
 include("_src/sample.jl")
 include("_src/fdchecks.jl")

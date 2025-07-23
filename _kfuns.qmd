@@ -127,34 +127,25 @@ end
 
 It makes sense to have a finite difference check for each of these:
 ```{julia}
-function fd_check_Dϕ(name, Dϕ, s, h=1e-6, tol=1e-8; verbose=false, kwargs...)
+function fd_check_Dϕ(Dϕ, s; kwargs...)
     ϕ,  dϕ_div,  dϕ,  Hϕ  = Dϕ(s; kwargs...)
-    ϕp, dϕp_div, dϕp, Hϕp = Dϕ(s+h; kwargs...)
-    ϕm, dϕm_div, dϕm, Hϕm = Dϕ(s-h; kwargs...)
-    relerr1 = abs( (dϕ_div*s-dϕ)/dϕ )
-    relerr2 = abs( (dϕ-(ϕp-ϕm)/(2h))/dϕ )
-    relerr3 = abs( (Hϕ-(dϕp-dϕm)/(2h))/Hϕ )
-    if verbose
-        println("Check $name:\t$relerr1\t$relerr2\t$relerr3")
-    elseif max(relerr1, relerr2, relerr3) > tol
-        error("Check $name:\t$relerr1\t$relerr2\t$relerr3")
-    end
+    @test dϕ_div*s ≈ dϕ
+    @test dϕ ≈ diff_fd(s->Dϕ(s; kwargs...)[1], s) rtol=1e-6
+    @test Hϕ ≈ diff_fd(s->Dϕ(s; kwargs...)[3], s) rtol=1e-6
 end
 
-let s = 0.89
-    fd_check_Dϕ("SE", Dϕ_SE, s)
-    fd_check_Dϕ("M1", Dϕ_M1, s)
-    fd_check_Dϕ("M3", Dϕ_M3, s)
-    fd_check_Dϕ("M5", Dϕ_M5, s)
-    fd_check_Dϕ("IQ", Dϕ_IQ, s)
-    fd_check_Dϕ("IM", Dϕ_IM, s)
-    fd_check_Dϕ("RQ", Dϕ_RQ, s; α=0.75)
+@testset begin
+    s = 0.89
+    @testset "SE" fd_check_Dϕ(Dϕ_SE, s)
+    @testset "M1" fd_check_Dϕ(Dϕ_M1, s)
+    @testset "M3" fd_check_Dϕ(Dϕ_M3, s)
+    @testset "M5" fd_check_Dϕ(Dϕ_M5, s)
+    @testset "IQ" fd_check_Dϕ(Dϕ_IQ, s)
+    @testset "IM" fd_check_Dϕ(Dϕ_IM, s)
+    @testset "RQ" fd_check_Dϕ(Dϕ_RQ, s; α=0.75)
 end
+nothing
 ```
-
-*A brief aside*: Having coded and tested the various derivative
-functions, we make the checker quiet unless some relative error is too
-big.  During development, I usually would use the checker in verbose mode.
 
 ## Distance functions
 
@@ -458,33 +449,34 @@ Hx_kernel(ctx :: RBFKernelContext{d},
 ## Testing
 
 ```{julia}
-let
+@testset "Kernel hyper derivatives" begin
     x, y = [0.1; 0.2], [0.8; 0.8]
-    ℓ = 0.2+rand()
-    check_fd(gθ_kernel(KernelSE{2}(ℓ),x,y)[1],
-             s->kernel(KernelSE{2}(ℓ+s),x,y), 0.0),
-    check_fd(Hθ_kernel(KernelSE{2}(ℓ),x,y)[1,1],
-             s->gθ_kernel(KernelSE{2}(ℓ+s),x,y)[1], 0.0)
+    ℓ = 0.2996
+    kse(ℓ) = KernelSE{2}(ℓ)
+    @test gθ_kernel(kse(ℓ),x,y)[1] ≈
+        diff_fd(s->kernel(kse(ℓ+s),x,y)) rtol=1e-6
+    @test Hθ_kernel(kse(ℓ),x,y)[1,1] ≈
+        diff_fd(s->gθ_kernel(kse(ℓ+s),x,y)[1]) rtol=1e-6
 end
-```
 
-```{julia}
-let
+@testset "RQ kernel hyper derivatives" begin
     x, y = [0.1; 0.2], [0.8; 0.8]
-    ℓ, α = 0.2+rand(), rand()
+    ℓ, α = 0.2996, 0.8253
     k(ℓ,α) = KernelRQ{2}(ℓ,α)
-    check_fd(gθ_kernel(k(ℓ,α),x,y)[1], s->kernel(k(ℓ+s,α),x,y), 0.0),
-    check_fd(gθ_kernel(k(ℓ,α),x,y)[2], s->kernel(k(ℓ,α+s),x,y), 0.0),
-    check_fd(Hθ_kernel(k(ℓ,α),x,y)[:,1], s->gθ_kernel(k(ℓ+s,α),x,y), 0.0),
-    check_fd(Hθ_kernel(k(ℓ,α),x,y)[:,2], s->gθ_kernel(k(ℓ,α+s),x,y), 0.0)
+    @test gθ_kernel(k(ℓ,α),x,y)[1] ≈ diff_fd(s->kernel(k(ℓ+s,α),x,y)) rtol=1e-6
+    @test gθ_kernel(k(ℓ,α),x,y)[2] ≈ diff_fd(s->kernel(k(ℓ,α+s),x,y)) rtol=1e-6
+    @test Hθ_kernel(k(ℓ,α),x,y)[:,1] ≈
+        diff_fd(s->gθ_kernel(k(ℓ+s,α),x,y)) rtol=1e-6
+    @test Hθ_kernel(k(ℓ,α),x,y)[:,2] ≈
+        diff_fd(s->gθ_kernel(k(ℓ,α+s),x,y)) rtol=1e-6
 end
-```
 
-```{julia}
-let
-    x, y, dx = [0.1; 0.2], [0.8; 0.8], rand(2)
-    ctx = KernelM5{2}(0.5)
-    check_fd(gx_kernel(ctx,x,y)'*dx, s->kernel(ctx,x+s*dx,y), 0.0),
-    check_fd(Hx_kernel(ctx,x,y)*dx, s->gx_kernel(ctx,x+s*dx,y), 0.0)
+@testset "Kernel spatial derivatives" begin
+    x, y, dx = [0.1; 0.2], [0.8; 0.8], [0.617; 0.779]
+    k = KernelM5{2}(0.5)
+    @test gx_kernel(k,x,y)'*dx ≈ diff_fd(x->kernel(k,x,y),x,dx) rtol=1e-6
+    @test Hx_kernel(k,x,y)*dx ≈ diff_fd(x->gx_kernel(k,x,y),x,dx) rtol=1e-6
 end
+
+nothing
 ```

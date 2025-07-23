@@ -87,8 +87,8 @@ let
     invAδA, invAΔA, invAΔδA = A0\δA, A0\ΔA, A0\ΔδA
     ΔδinvA = (invAδA*invAΔA + invAΔA*invAδA - invAΔδA)/A0
 
-    check_fd(δinv(A0,δA), s->inv(A0+s*δA), 0),
-    check_fd(ΔδinvA, s->δinv(A0+s*ΔA, δA+s*ΔδA), 0)
+    @test δinv(A0,δA) ≈ diff_fd(inv,A0,δA) rtol=1e-6
+    @test ΔδinvA ≈ diff_fd(s->δinv(A0+s*ΔA, δA+s*ΔδA)) rtol=1e-6
 end
 ```
 
@@ -157,9 +157,9 @@ let
     δlogdet(A, δA) = tr(A\δA)
     Δδlogdet(A, δA, ΔA, ΔδA) = tr(A\ΔδA)-tr((A\ΔA)*(A\δA))
 
-    check_approx(δlogdet(A, δA), dot(inv(A'), δA)),
-    check_fd(δlogdet(A,δA), s->log(det(A+s*δA)), 0),
-    check_fd(Δδlogdet(A,δA,ΔA,ΔδA), s->δlogdet(A+s*ΔA,δA+s*ΔδA), 0)
+    @test δlogdet(A,δA) ≈ dot(inv(A'), δA)
+    @test δlogdet(A,δA) ≈ diff_fd(A->log(det(A)),A,δA) rtol=1e-6
+    @test Δδlogdet(A,δA,ΔA,ΔδA) ≈ diff_fd(s->δlogdet(A+s*ΔA,δA+s*ΔδA)) rtol=1e-6
 end
 ```
 
@@ -267,8 +267,8 @@ let
     gp_SE_nll(ℓ,z) = nll(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
     g = gθz_nll(GPPContext(KernelSE{2}(ℓ), s, Zk, y))
 
-    check_fd(g[1], ℓ->gp_SE_nll(ℓ,z), ℓ),
-    check_fd(g[2], z->gp_SE_nll(ℓ,z), z)
+    @test g[1] ≈ diff_fd(ℓ->gp_SE_nll(ℓ,z), ℓ) rtol=1e-6
+    @test g[2] ≈ diff_fd(z->gp_SE_nll(ℓ,z), z) rtol=1e-6
 end
 ```
 
@@ -395,12 +395,12 @@ let
     testf(ℓ,z) = Hθ_nll(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
     ϕref, gref, Href = testf(ℓ, z)
 
-    max(check_fd(gref[1], ℓ->testf(ℓ,z)[1][1], ℓ),
-        check_fd(gref[2], z->testf(ℓ,z)[1][1], z),
-        check_fd(Href[1,1], ℓ->testf(ℓ,z)[2][1], ℓ),
-        check_fd(Href[1,2], ℓ->testf(ℓ,z)[2][2], ℓ),
-        check_fd(Href[2,2], z->testf(ℓ,z)[2][2], z),
-        check_approx(Href[1,2], Href[2,1]))
+    @test gref[1] ≈ diff_fd(ℓ->testf(ℓ,z)[1][1], ℓ) rtol=1e-6
+    @test gref[2] ≈ diff_fd(z->testf(ℓ,z)[1][1], z) rtol=1e-6
+    @test Href[1,1] ≈ diff_fd(ℓ->testf(ℓ,z)[2][1], ℓ) rtol=1e-6
+    @test Href[1,2] ≈ diff_fd(ℓ->testf(ℓ,z)[2][2], ℓ) rtol=1e-6
+    @test Href[2,2] ≈ diff_fd(z->testf(ℓ,z)[2][2], z) rtol=1e-6
+    @test Href[1,2] ≈ Href[2,1]
 end
 ```
 
@@ -515,7 +515,7 @@ let
     KC = Cholesky(sqrt(getCopt(gp))*getKC(gp).U)
     c = KC\y
 
-    check_approx(nll(KC, c, y), nllr(gp))
+    @test nll(KC, c, y) ≈ nllr(gp)
 end
 ```
 
@@ -617,8 +617,8 @@ let
 
     gp_SE_nllr(ℓ,z) = nllr(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
     g = gθz_nllr(GPPContext(KernelSE{2}(ℓ), s, Zk, y))
-    check_fd(g[1], ℓ->gp_SE_nllr(ℓ,z), ℓ)
-    check_fd(g[2], z->gp_SE_nllr(ℓ,z), z)
+    @test g[1] ≈ diff_fd(ℓ->gp_SE_nllr(ℓ,z), ℓ) rtol=1e-6
+    @test g[2] ≈ diff_fd(z->gp_SE_nllr(ℓ,z), z) rtol=1e-6
 end
 ```
 
@@ -753,12 +753,12 @@ let
     testf(ℓ,z) = Hθ_nllr(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
     ϕref, gref, Href = testf(ℓ, z)
 
-    max(check_fd(gref[1], ℓ->testf(ℓ,z)[1][1], ℓ),
-        check_fd(gref[2], z->testf(ℓ,z)[1][1], z),
-        check_fd(Href[1,1], ℓ->testf(ℓ,z)[2][1], ℓ),
-        check_fd(Href[1,2], ℓ->testf(ℓ,z)[2][2], ℓ),
-        check_fd(Href[2,2], z->testf(ℓ,z)[2][2], z),
-        check_approx(Href[1,2], Href[2,1]))
+    @test gref[1] ≈ diff_fd(ℓ->testf(ℓ,z)[1][1], ℓ) rtol=1e-6
+    @test gref[2] ≈ diff_fd(z->testf(ℓ,z)[1][1], z) rtol=1e-6
+    @test Href[1,1] ≈ diff_fd(ℓ->testf(ℓ,z)[2][1], ℓ) rtol=1e-6
+    @test Href[1,2] ≈ diff_fd(ℓ->testf(ℓ,z)[2][2], ℓ) rtol=1e-6
+    @test Href[2,2] ≈ diff_fd(z->testf(ℓ,z)[2][2], z) rtol=1e-6
+    @test Href[1,2] ≈ Href[2,1]
 end
 ```
 
@@ -1058,10 +1058,10 @@ let
     trinv2 = cholesky_trinvT(alpha, beta)
     ϕ̄2, dϕ̄ = nllrT!(K, y, η, alpha, beta, c)
 
-    max(check_approx(data1, data2),
-        check_approx(logdet1, logdet2),
-        check_approx(trinv1, trinv2),
-        check_approx(ϕ̄1, ϕ̄2))
+    @test data1 ≈ data2
+    @test logdet1 ≈ logdet2
+    @test trinv1 ≈ trinv2
+    @test ϕ̄1 ≈ ϕ̄2
 end
 ```
 
@@ -1074,7 +1074,7 @@ let
     η = 1e-3
     K = kernel(ctx, Zk)
     tridiag_reduce!(K, y)
-    check_fd(nllrT(K, y, η)[2], η->nllrT(K, y, η)[1], η)
+    @test nllrT(K, y, η)[2] ≈ diff_fd(η->nllrT(K, y, η)[1], η) rtol=1e-6
 end
 ```
 
@@ -1238,7 +1238,7 @@ $$
     H_{z \gamma} & H_{zz}
   \end{bmatrix}
   \begin{bmatrix}
-    u_\gamma \\ 
+    u_\gamma \\
     u_z
   \end{bmatrix} =
   \begin{bmatrix} g_\gamma \\ 0 \end{bmatrix}

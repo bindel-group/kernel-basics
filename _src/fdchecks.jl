@@ -6,33 +6,16 @@ A finite-difference tester is a useful thing to have.
 =#
 
 """
-     check_approx(xref, x; rtol=1e-6, atol=0.0)
-
-Error if `norm(xref-x) > rtol*norm(xref) + atol`, otherwise return relerr.
-"""
-function check_approx(xref, x; rtol=1e-6, atol=0.0)
-    abserr = norm(xref-x)
-    refnorm = norm(xref)
-    if abserr > rtol*refnorm + atol
-        error("Check failed ($x v $xref): $abserr > $rtol * $refnorm + $atol")
-    end
-    abserr/refnorm
-end
-
-
-"""
-    diff_fd(f, x; h=1e-6)
+    diff_fd(f, x=0.0; h=1e-6)
 
 Compute a centered difference estimate of f'(x) with step size h.
 """
-diff_fd(f, x; h=1e-6) = (f(x+h)-f(x-h))/(2h)
+diff_fd(f, x=0.0; h=1e-6) = (f(x+h)-f(x-h))/(2h)
 
 
 """
-    check_df(df_ref, f, x; h=1e-6, rtol=1e-6, atol=0.0)
+    diff_fd(f, x, dx; h=1e-6)
 
-Check that a finite difference estimate of f'(x) matches df_ref.
+Computed centered different estimate of d/ds f(x+sdx) with step h.
 """
-check_fd(df_ref, f, x; h=1e-6, rtol=1e-6, atol=0.0) =
-    check_approx(df_ref, diff_fd(f, x, h=h), rtol=rtol, atol=atol)
-
+diff_fd(f, x, dx; h=1e-6) = diff_fd(s->f(x+s*dx), h=h)

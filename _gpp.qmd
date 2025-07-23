@@ -287,7 +287,7 @@ And, as usual, we have some tests.  First, we check adding and
 removing points and changing the kernel.
 
 ```{julia}
-let
+@testset "Update points and kernel in GPPContext" begin
     testf(x,y) = x^2+y
     Zk, y = test_setup2d(testf)
     ctx = KernelSE{2}(1.0)
@@ -296,37 +296,37 @@ let
     gp1 = GPPContext(ctx, 0.0, Zk, y)
     gpt = GPPContext(ctx, 0.0, 10)
     gpt = add_points!(gpt, Zk, y)
-    check_approx(getc(gpt), getc(gp1))
+    @test getc(gpt) ≈ getc(gp1)
 
     gp2 = GPPContext(ctx2, 0.0, Zk, y)
     gpt = change_kernel!(gpt, ctx2, 0.0)
-    check_approx(getc(gpt), getc(gp2))
+    @test getc(gpt) ≈ getc(gp2)
     gpt = change_kernel!(gpt, ctx, 0.0)
 
     gpt = remove_points!(gpt, 2)
     gp3 = GPPContext(ctx, 0.0, Zk[:,1:end-2], y[1:end-2])
-    check_approx(getc(gpt), getc(gp3))
+    @test getc(gpt) ≈ getc(gp3)
 
     gpt = add_points!(gpt, Zk[:,end-1:end], y[end-1:end])
-    check_approx(getc(gpt), getc(gp1))
+    @test getc(gpt) ≈ getc(gp1)
 end
+nothing
 ```
 
 And now we check consistency of the predictive mean and variance and
 their derivatives.
 
 ```{julia}
-let
+@testset "Predictive mean and variance derivatives" begin
     Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y))
-    z = [0.47; 0.47]
-    dz = randn(2)
-
+    z, dz = [0.47; 0.47], [0.132; 0.0253]
     gp = GPPContext(KernelSE{2}(0.5), 1e-8, Zk, y)
-    max(check_fd(gx_mean(gp, z)'*dz, s->mean(gp, z+s*dz), 0.0),
-        check_fd(Hx_mean(gp, z)*dz, s->gx_mean(gp, z+s*dz), 0.0),
-        check_fd(gx_var(gp, z)'*dz, s->var(gp, z+s*dz), 0.0),
-        check_fd(Hx_var(gp, z)*dz, s->gx_var(gp, z+s*dz), 0.0))
+    @test gx_mean(gp,z)'*dz ≈ diff_fd(z->mean(gp,z),z,dz) rtol=1e-6
+    @test Hx_mean(gp,z)*dz ≈ diff_fd(z->gx_mean(gp,z),z,dz) rtol=1e-6
+    @test gx_var(gp,z)'*dz ≈ diff_fd(z->var(gp,z),z,dz) rtol=1e-6
+    @test Hx_var(gp,z)*dz ≈ diff_fd(z->gx_var(gp,z),z,dz) rtol=1e-6
 end
+nothing
 ```
 
 Now we check that the predictive mean and variance agree with our
