@@ -79,7 +79,10 @@ The basic moving pieces are:
 {{< include _ldoc/gpp.qmd >}}
 {{< include _ldoc/test_gpp.qmd >}}
 
+{{< include _derivatives.qmd >}}
+
 {{< include _ldoc/hypers.qmd >}}
+{{< include _ldoc/test_hypers.qmd >}}
 
 {{< include _ldoc/acquisition.qmd >}}
 {{< include _ldoc/test_acquisition.qmd >}}

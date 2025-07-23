@@ -9,6 +9,7 @@ QMD=	../_ldoc/testing.qmd \
 	../_ldoc/test_kfuns.qmd \
 	../_ldoc/test_kmats.qmd \
 	../_ldoc/test_gpp.qmd \
+	../_ldoc/test_hypers.qmd \
 	../_ldoc/test_acquisition.qmd
 
 ../_ldoc/%.qmd: %.jl

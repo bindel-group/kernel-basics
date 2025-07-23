@@ -45,129 +45,6 @@ nll(gp :: GPPContext) = nll(getKC(gp), getc(gp), gety(gp))
 #=
 ## Differentiating the NLL
 
-We first briefly recall how variational notation works.  For a given
-function $f$, the symbol $\delta f$ (read "variation of $f$")
-represents a generic directional derivative with respect to some
-underlying parameter.  If $f$ depends on $x$, for example, we would
-write $\delta f = f'(x) \, \delta x$.  For second variations, we would
-usually use $\Delta$, e.g.
-$$
-  \Delta \delta f =
-  f''(x) \, \delta x \, \Delta x +
-  f'(x) \Delta \delta x
-$$
-The advantage of this notation is
-that it sweeps under the rug some of the book-keeping of tracking what
-parameter we differentiate with respect to.
-
-### Differentiating through the inverse
-
-To differentiate the NLL, we need to be able to differentiate inverses
-and log-determinants.  We begin with inverses.  Applying implicit
-differentiation to the equation $A^{-1} A = I$ gives us
-$$
-  \delta[A^{-1}] \, A + A^{-1} \, \delta A = 0,
-$$
-which we can rearrange to
-$$
-  \delta[A^{-1}] = -A^{-1} (\delta A) A^{-1}.
-$$
-The second derivative is
-$$
-  \Delta \delta [A^{-1}] =
-  A^{-1} (\Delta A) A^{-1} (\delta A) A^{-1} +
-  A^{-1} (\delta A) A^{-1} (\Delta A) A^{-1}
-  -A^{-1} (\Delta \delta A) A^{-1}
-$$
-
-It is a useful habit to check derivative computations with finite
-differences, and we will follow that habit here.
-```{julia}
-let
-    A0, δA, ΔA, ΔδA = randn(10,10), rand(10,10), rand(10,10), rand(10,10)
-
-    δinv(A,δA) = -A\δA/A
-    invAδA, invAΔA, invAΔδA = A0\δA, A0\ΔA, A0\ΔδA
-    ΔδinvA = (invAδA*invAΔA + invAΔA*invAδA - invAΔδA)/A0
-
-    @test δinv(A0,δA) ≈ diff_fd(s->inv(A0+s*δA)) rtol=1e-6
-    @test ΔδinvA ≈ diff_fd(s->δinv(A0+s*ΔA, δA+s*ΔδA)) rtol=1e-6
-end
-```
-
-### Differentiating the log determinant
-
-For the case of the log determinant, it is helpful to decompose a
-generic square matrix $F$ as
-$$
-  F = L + D + U
-$$
-where $L$, $D$, and $U$ are the strictly lower triangular, diagonal,
-and strictly upper triangular parts of $F$, respectively.  Then note
-that
-$$
-  (I+\epsilon F) = (I + \epsilon L)(I + \epsilon (D+U)) + O(\epsilon^2),
-$$
-and therefore
-$$\begin{aligned}
-  \det(I+\epsilon F)
-  &= \det(I + \epsilon(D+U)) + O(\epsilon^2) \\
-  &= \prod_i (1+ \epsilon d_i) + O(\epsilon^2) \\
-  &= 1 + \epsilon \sum_i d_i + O(\epsilon^2) \\
-  &= 1 + \epsilon \tr(F) + O(\epsilon^2).
-\end{aligned}$$
-Hence the derivative of $\det(A)$ about $A = I$ is $\tr(A)$.
-
-Now consider
-$$
-  \det(A + \epsilon (\delta A)) =
-  \det(A) \det(I+ \epsilon A^{-1} \delta A) =
-  \det(A) + \epsilon \det(A) \tr(A^{-1} \delta A) + O(\epsilon^2).
-$$
-This gives us that in general,
-$$
-  \delta[\det(A)] = \det(A) \tr(A^{-1} \delta A),
-$$
-and hence
-$$
-  \delta[\log \det(A)]
-  = \frac{\delta[\det(A)]}{\det(A)}
-  = \tr(A^{-1} \delta A).
-$$
-We can also write this as
-$$
-  \delta[\log \det(A)]
-  = \langle A^{-T}, \delta A \rangle_F,
-$$
-i.e. $A^{-T}$ is the gradient of $\log \det(A)$.
-
-The second derivative is
-$$
-  \Delta \delta [\log \det(A)] =
-  \tr(A^{-1} \Delta \delta A) -
-  \tr(A^{-1} \Delta A \, A^{-1} \delta A).
-$$
-
-Again, a finite difference check is a useful thing.  We do need to
-be a little careful here in order to make sure that the log
-determinant is well defined at $A$ and in a near neighborhood.
-```{julia}
-let
-    V = randn(10,10)
-    A = V*Diagonal(1.0.+rand(10))/V
-    δA, ΔA, ΔδA = randn(10,10), randn(10,10), randn(10,10)
-
-    δlogdet(A, δA) = tr(A\δA)
-    Δδlogdet(A, δA, ΔA, ΔδA) = tr(A\ΔδA)-tr((A\ΔA)*(A\δA))
-
-    @test δlogdet(A,δA) ≈ dot(inv(A'), δA)
-    @test δlogdet(A,δA) ≈ diff_fd(s->log(det(A+s*δA))) rtol=1e-6
-    @test Δδlogdet(A,δA,ΔA,ΔδA) ≈ diff_fd(s->δlogdet(A+s*ΔA,δA+s*ΔδA)) rtol=1e-6
-end
-```
-
-### Putting it together
-
 Putting together the results of the previous section, we have
 $$
   \delta \phi =
@@ -261,21 +138,6 @@ gθz_nll(gp :: GPPContext, invK) =
 gθz_nll(gp :: GPPContext) = gθz_nll(gp, getKC(gp)\I)
 
 #=
-Per usual, we also do a finite difference check.
-```{julia}
-let
-    Zk, y = test_setup2d((x,y) -> x^2 + y)
-    s, ℓ = 1e-4, 1.0
-    z=log(s)
-
-    gp_SE_nll(ℓ,z) = nll(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
-    g = gθz_nll(GPPContext(KernelSE{2}(ℓ), s, Zk, y))
-
-    @test g[1] ≈ diff_fd(ℓ->gp_SE_nll(ℓ,z), ℓ) rtol=1e-6
-    @test g[2] ≈ diff_fd(z->gp_SE_nll(ℓ,z), z) rtol=1e-6
-end
-```
-
 #### Fast Hessians
 
 If we want to compute with Newton methods, it is useful to
@@ -389,26 +251,6 @@ function Hθ_nll(gp :: GPPContext)
 end
 
 #=
-As usual, we sanity check on a simple case.
-
-```{julia}
-let
-    Zk, y = test_setup2d((x,y) -> x^2 + y)
-    s, ℓ = 1e-3, 0.89
-    z = log(s)
-
-    testf(ℓ,z) = Hθ_nll(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
-    ϕref, gref, Href = testf(ℓ, z)
-
-    @test gref[1] ≈ diff_fd(ℓ->testf(ℓ,z)[1][1], ℓ) rtol=1e-6
-    @test gref[2] ≈ diff_fd(z->testf(ℓ,z)[1][1], z) rtol=1e-6
-    @test Href[1,1] ≈ diff_fd(ℓ->testf(ℓ,z)[2][1], ℓ) rtol=1e-6
-    @test Href[1,2] ≈ diff_fd(ℓ->testf(ℓ,z)[2][2], ℓ) rtol=1e-6
-    @test Href[2,2] ≈ diff_fd(z->testf(ℓ,z)[2][2], z) rtol=1e-6
-    @test Href[1,2] ≈ Href[2,1]
-end
-```
-
 #### Fast approximate Hessians
 
 As a final note, we can *estimate* second derivatives using stochastic
@@ -509,21 +351,6 @@ nllr(gp :: GPPContext) = nllr(getKC(gp), getc(gp), gety(gp))
 getCopt(gp :: GPPContext) = ( getc(gp)'*gety(gp) )/gp.n
 
 #=
-Per our custom, we code a short sanity check.
-
-```{julia}
-let
-    Zk, y = test_setup2d((x,y) -> x^2 + y)
-    gp = GPPContext(KernelSE{2}(1.0), 0.0, Zk, y)
-
-    # Form scaled kernel Cholesky and weights
-    KC = Cholesky(sqrt(getCopt(gp))*getKC(gp).U)
-    c = KC\y
-
-    @test nll(KC, c, y) ≈ nllr(gp)
-end
-```
-
 Differentiating $\bar{\phi}$ with respect to hyperparameters of $\bar{K}$
 (i.e. differentiating with respect to any hyperparameter but the
 scaling factor), we have
@@ -612,22 +439,6 @@ gθ_nllr(gp :: GPPContext) = gθ_nllr(gp, getKC(gp)\I, getCopt(gp))
 gθz_nllr(gp :: GPPContext) = gθz_nllr(gp, getKC(gp)\I, getCopt(gp))
 
 #=
-And our finite difference check:
-
-```{julia}
-let
-    Zk, y = test_setup2d((x,y) -> x^2 + y)
-    s, ℓ = 1e-4, 1.0
-    z=log(s)
-
-    gp_SE_nllr(ℓ,z) = nllr(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
-    g = gθz_nllr(GPPContext(KernelSE{2}(ℓ), s, Zk, y))
-    @test g[1] ≈ diff_fd(ℓ->gp_SE_nllr(ℓ,z), ℓ) rtol=1e-6
-    @test g[2] ≈ diff_fd(z->gp_SE_nllr(ℓ,z), z) rtol=1e-6
-end
-```
-
-
 If we want the gradient and the Hessian, we compute
 $$\begin{aligned}
   \delta \phi =&
@@ -747,26 +558,6 @@ function Hθ_nllr(gp :: GPPContext; withz=true)
 end
 
 #=
-And the sanity check on a simple case.
-
-```{julia}
-let
-    Zk, y = test_setup2d((x,y) -> x^2 + y)
-    s, ℓ = 1e-3, 0.89
-    z = log(s)
-
-    testf(ℓ,z) = Hθ_nllr(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
-    ϕref, gref, Href = testf(ℓ, z)
-
-    @test gref[1] ≈ diff_fd(ℓ->testf(ℓ,z)[1][1], ℓ) rtol=1e-6
-    @test gref[2] ≈ diff_fd(z->testf(ℓ,z)[1][1], z) rtol=1e-6
-    @test Href[1,1] ≈ diff_fd(ℓ->testf(ℓ,z)[2][1], ℓ) rtol=1e-6
-    @test Href[1,2] ≈ diff_fd(ℓ->testf(ℓ,z)[2][2], ℓ) rtol=1e-6
-    @test Href[2,2] ≈ diff_fd(z->testf(ℓ,z)[2][2], z) rtol=1e-6
-    @test Href[1,2] ≈ Href[2,1]
-end
-```
-
 The vector $c = \bar{c}/C_{\mathrm{opt}}$ can be computed later if
 needed.  However, we usually won't need it, as we can write the the
 posterior mean at a new point $z$ as $\bar{k}_{Xz}^T \bar{c}$.  The
@@ -1035,56 +826,6 @@ function nllrT(T, y, s)
 end
 
 #=
-Finally, we do a consistency check between our previous computations
-of the reduced NLL and the version based on tridiagonalization.
-
-```{julia}
-let
-    n = 10
-    Zk, y = test_setup2d((x,y) -> x^2 + y, n)
-    ctx = KernelSE{2}(1.0)
-    η = 1e-3
-
-    # Ordinary reduced NLL computation (full and pieces)
-    K = kernel(ctx, Zk)
-    KC = cholesky(K+η*I)
-    c = KC\y
-    data1 = c'*y
-    logdet1 = sum(log.(diag(KC.U)))
-    trinv1 = tr(KC\I)
-    ϕ̄1 = nllr(KC, c, y)
-
-    # Reduced NLL computation
-    tridiag_reduce!(K, y)
-    alpha, beta = tridiag_params(K, η)
-    cholesky_T!(alpha, beta)
-    c = copy(y)
-    cholesky_T_solve!(alpha, beta, c)
-    data2 = c'*y
-    logdet2 = sum(log.(alpha))
-    trinv2 = cholesky_trinvT(alpha, beta)
-    ϕ̄2, dϕ̄ = nllrT!(K, y, η, alpha, beta, c)
-
-    @test data1 ≈ data2
-    @test logdet1 ≈ logdet2
-    @test trinv1 ≈ trinv2
-    @test ϕ̄1 ≈ ϕ̄2
-end
-```
-
-We will also do a finite difference check on the computed gradient.
-
-```{julia}
-let
-    Zk, y = test_setup2d((x,y) -> x^2 + y)
-    ctx = KernelSE{2}(1.0)
-    η = 1e-3
-    K = kernel(ctx, Zk)
-    tridiag_reduce!(K, y)
-    @test nllrT(K, y, η)[2] ≈ diff_fd(η->nllrT(K, y, η)[1], η) rtol=1e-6
-end
-```
-
 ### Optimizing noise variance
 
 The main cost of anything to do with noise variance is the initial
