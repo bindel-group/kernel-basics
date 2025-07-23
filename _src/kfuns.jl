@@ -1,3 +1,5 @@
+#ldoc on
+#=
 # Kernel functions
 
 A kernel function is a symmetric positive definite function
@@ -46,7 +48,8 @@ multiquadric kernel, since we usually want more smoothness than
 the Matern 1/2 and Matern 3/2 kernels provide.
 
 In code, these functions are
-```{julia}
+=#
+
 ϕ_SE(s) = exp(-s^2/2)
 ϕ_M1(s) = exp(-s)
 
@@ -61,12 +64,13 @@ end
 ϕ_IQ(s) = 1/(1+s^2)
 ϕ_IM(s) = 1/sqrt(1+s^2)
 ϕ_RQ(s; α=1.0) = (1+s^2)^-α
-```
 
+#=
 For later work, we will need functions for $\phi(s)$, $\phi'(s)/s$,
 $\phi'(s)$, and $\phi''(s)$.  It is helpful to pack these all together
 in a single function definition.
-```{julia}
+=#
+
 function Dϕ_SE(s)
     ϕ = exp(-s^2/2)
     dϕ_div = -ϕ
@@ -123,9 +127,10 @@ function Dϕ_RQ(s; α=1.0)
     Hϕ = dϕ_div + α*(α+1)*(1+s^2)^-(α+2)*4*s^2
     ϕ, dϕ_div, dϕ, Hϕ
 end
-```
 
+#=
 It makes sense to have a finite difference check for each of these:
+
 ```{julia}
 function fd_check_Dϕ(Dϕ, s; kwargs...)
     ϕ,  dϕ_div,  dϕ,  Hϕ  = Dϕ(s; kwargs...)
@@ -153,7 +158,8 @@ There are several ways to compute Euclidean distance functions in
 Julia.  The most obvious ones (e.g. `norm(x-y)`) involve materializing
 an intermediate vector.  Since we will be doing this a lot, we will
 write a loopy version that runs somewhat faster.
-```{julia}
+=#
+
 function dist2(x :: AbstractVector{T}, y :: AbstractVector{T}) where {T}
     s = zero(T)
     for k = 1:length(x)
@@ -165,19 +171,20 @@ end
 
 dist(x :: AbstractVector{T}, y :: AbstractVector{T}) where {T} =
     sqrt(dist2(x,y))
-```
 
+#=
 ## Kernel contexts
 
 We define a *kernel context* as "all the stuff you need to work with a
 kernel."  This includes the type of the kernel, the dimension of the
 space, and any hyperparameters.
 
-```{julia}
+=#
+
 abstract type KernelContext end
 (ctx :: KernelContext)(args...) = kernel(ctx, args...)
-```
 
+#=
 All of the kernels we work with are based on radial basis functions,
 and have the form
 $$
@@ -187,8 +194,8 @@ where $\ell$ is a length scale parameter.  There may be other
 hyperparameters as well.  We therefore define an `RBFKernelContext`
 subtype that includes the dimension of the space as a type parameter,
 and define a getter function to extract that information.
+=#
 
-```{julia}
 """
 For an RBFKernelContext{d}, we should define
 
@@ -209,16 +216,16 @@ function getθ(ctx :: KernelContext)
     getθ!(θ, ctx)
     θ
 end
-```
 
+#=
 ## Simple RBF kernels
 
 In most cases, the only hyperparameter we will track in the type is
 the length scale hyperparameter.  For these subtypes of
 `RBFKernelContext`, we have a fairly boilerplate structure and method
 definition that we encode in a macro.
+=#
 
-```{julia}
 macro rbf_simple_kernel(T, ϕ_rbf, Dϕ_rbf)
     T, ϕ_rbf, Dϕ_rbf= esc(T), esc(ϕ_rbf), esc(Dϕ_rbf)
     quote
@@ -239,20 +246,20 @@ end
 @rbf_simple_kernel(KernelM5, ϕ_M5, Dϕ_M5)
 @rbf_simple_kernel(KernelIQ, ϕ_IQ, Dϕ_IQ)
 @rbf_simple_kernel(KernelIM, ϕ_IM, Dϕ_IM)
-```
 
+#=
 ## Kernel operations
 
 One of the reasons for defining a kernel context is that it allows us
 to have a generic high-performance interface for kernel operations.
 The most fundamental operation, of course, is evaluating the kernel
 on a pair of points.
+=#
 
-```{julia}
 kernel(ctx :: RBFKernelContext, x :: AbstractVector, y :: AbstractVector) =
     ϕ(ctx, dist(x, y)/ctx.ℓ)
-```
 
+#=
 The interface for computing derivatives will involve two functions:
 one for computing the gradient with respect to the hypers, the other
 for computing the Hessian.  In the case of radial basis functions
@@ -265,7 +272,8 @@ H_{\theta} k(x,y) &=
     \begin{bmatrix} (\phi''(s) s + 2 \phi'(s)) s / \ell^2 \end{bmatrix}
 \end{aligned}$$
 This gives us the following generic code:
-```{julia}
+=#
+
 function gθ_kernel!(g :: AbstractVector, ctx :: RBFKernelContext,
                     x :: AbstractVector, y :: AbstractVector, c=1.0)
     ℓ = ctx.ℓ
@@ -283,8 +291,8 @@ function Hθ_kernel!(H :: AbstractMatrix, ctx :: RBFKernelContext,
     H[1,1] += c*(Hϕ*s + 2*dϕ)*s/ℓ^2
     H
 end
-```
 
+#=
 For spatial derivatives of kernels based on radial basis functions, it is
 useful to write $r = x-y$ and $\rho = \|r\|$, and to write the
 derivative formulae in terms of $r$ and $\rho$.  Using $f_{,i}$ to
@@ -317,8 +325,8 @@ $$
   \left( \phi''(\rho) - \frac{\phi'(\rho)}{\rho} \right) uu^T
 $$
 This gives us the following generic code.
+=#
 
-```{julia}
 function gx_kernel!(g :: AbstractVector, ctx :: RBFKernelContext,
                     x :: AbstractVector, y :: AbstractVector, c=1.0)
     ℓ = ctx.ℓ
@@ -360,14 +368,14 @@ function Hx_kernel!(H :: AbstractMatrix, ctx :: RBFKernelContext,
     end
     H
 end
-```
 
+#=
 ## RQ kernel
 
 The rational quadratic case is a little more complicated, with two
 adjustable hyperparameters (the length scale $\ell$ and the exponent $\alpha$).
+=#
 
-```{julia}
 struct KernelRQ{d} <: RBFKernelContext{d}
     ℓ :: Float64
     α :: Float64
@@ -382,12 +390,12 @@ function getθ!(θ, ctx :: KernelRQ)
     θ[2] = α
 end
 updateθ(ctx :: KernelRQ{d}, θ) where {d} = KernelRQ{d}(θ[1], θ[2])
-```
 
+#=
 Here we also want to compute the gradients and Hessians with respect
 to both $\ell$ and $\alpha$.
+=#
 
-```{julia}
 function gθ_kernel!(g :: AbstractVector, ctx :: KernelRQ,
                     x :: AbstractVector, y :: AbstractVector, c=1.0)
     ℓ, α = ctx.ℓ, ctx.α
@@ -419,8 +427,8 @@ function Hθ_kernel!(H :: AbstractMatrix, ctx :: KernelRQ,
     H[2,2] += c*Hαα
     H
 end
-```
 
+#=
 ## Convenience functions
 
 While it is a little more efficient to use a mutating function to
@@ -428,7 +436,8 @@ compute kernel gradients and Hessians, it is also convenient to have a
 version available to allocate an outupt vector or matrix.  We note
 that these convenience functions do not need to be specialized for the
 rational quadratic case.
-```{julia}
+=#
+
 gθ_kernel(ctx :: RBFKernelContext,
           x :: AbstractVector, y :: AbstractVector) =
               gθ_kernel!(zeros(nhypers(ctx)), ctx, x, y)
@@ -444,8 +453,8 @@ gx_kernel(ctx :: RBFKernelContext{d},
 Hx_kernel(ctx :: RBFKernelContext{d},
           x :: AbstractVector, y :: AbstractVector) where {d} =
               Hx_kernel!(zeros(d,d), ctx, x, y)
-```
 
+#=
 ## Testing
 
 ```{julia}
@@ -480,3 +489,4 @@ end
 
 nothing
 ```
+=#

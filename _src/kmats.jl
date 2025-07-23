@@ -1,0 +1,477 @@
+#ldoc on
+#=
+# Kernel matrices
+
+## Kernel evaluation organization
+
+Now we would like code to compute kernel matrices $K_{XY}$ (and
+vectors of kernel evaluations $k_{Xz}$).  Julia allows us to do this
+concisely using *comprehensions*:
+```{julia}
+kernel0(k :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
+    [k(x,y) for x in eachcol(X), y in eachcol(Y)]
+kernel0(k :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
+    [k(x,z) for x in eachcol(X)]
+```
+There are two minor drawbacks to forming kernel matrices this way.
+First, the computation allocates a new output matrix or vector each
+time it is invoked; we would like to be able to write into existing
+storage, if storage has already been allocated.  Second, we want to
+exploit symmetry when computing $K_{XX}$.  Hence, we will put together
+a few helper functions for these tasks:
+=#
+
+function kernel!(KXX :: AbstractMatrix, k :: KernelContext,
+                 X :: AbstractMatrix)
+    for j = 1:size(X,2)
+        xj = @view X[:,j]
+        KXX[j,j] = k(xj, xj)
+        for i = 1:j-1
+            xi = @view X[:,i]
+            kij = k(xi, xj)
+            KXX[i,j] = kij
+            KXX[j,i] = kij
+        end
+    end
+    KXX
+end
+
+function kernel!(KXz :: AbstractVector, k :: KernelContext,
+                 X :: AbstractMatrix, z :: AbstractVector)
+    for i = 1:size(X,2)
+        xi = @view X[:,i]
+        KXz[i] = k(xi, z)
+    end
+    KXz
+end
+
+function kernel!(KXY :: AbstractMatrix, k :: KernelContext,
+                 X :: AbstractMatrix, Y :: AbstractMatrix)
+    for j = 1:size(Y,2)
+        yj = @view Y[:,j]
+        for i = 1:size(X,2)
+            xi = @view X[:,i]
+            KXY[i,j] = k(xi, yj)
+        end
+    end
+    KXY
+end
+
+kernel(k :: KernelContext, X :: AbstractMatrix) =
+    kernel!(zeros(size(X,2), size(X,2)), k, X)
+
+kernel(k :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
+    kernel!(zeros(size(X,2)), k, X, z)
+
+kernel(k :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
+    kernel!(zeros(size(X,2), size(Y,2)), k, X, Y)
+
+#=
+Sometimes, we want to incorporate a shift in the kernel matrix
+construction as well.
+=#
+
+function kernel!(KXX :: AbstractMatrix, ctx :: KernelContext,
+                 X :: AbstractMatrix, η :: Real)
+    for j = 1:size(X,2)
+        xj = @view X[:,j]
+        KXX[j,j] = kernel(ctx, xj, xj) + η
+        for i = 1:j-1
+            xi = @view X[:,i]
+            kij = kernel(ctx, xi, xj)
+            KXX[i,j] = kij
+            KXX[j,i] = kij
+        end
+    end
+    KXX
+end
+
+kernel(ctx :: KernelContext, X :: AbstractMatrix, s :: Real) =
+    kernel!(zeros(size(X,2), size(X,2)), ctx, X, s)
+
+#=
+It's always useful to sanity check that these computations are done
+correctly, or at least that there is internal consistency between the versions:
+```{julia}
+@testset "Compare kernel matrix constructors" begin
+    Zk = kronecker_quasirand(2,10)
+    k = KernelSE{2}(1.0)
+
+    # Comprehension-based eval
+    KXX1 = kernel0(k, Zk, Zk)
+    KXz1 = kernel0(k, Zk, Zk[:,1])
+
+    # Dispatch through call mechanism
+    KXX2 = k(Zk)
+    KXX3 = k(Zk, Zk)
+    KXz2 = k(Zk, Zk[:,1])
+
+    @test KXX1 ≈ KXX2
+    @test KXX1 ≈ KXX3
+    @test KXz1 ≈ KXX1[:,1]
+    @test KXz2 ≈ KXX1[:,1]
+end
+nothing
+```
+
+We note that apart from allocations in the initial compilation, every
+version of the kernel matrix and vector evaluations does a minimal
+amount of memory allocation: two allocations for the versions that
+create outputs, zero allocations for the versions that are provided
+with storage.
+```{julia}
+let
+    Zk = kronecker_quasirand(2,10)
+    k = KernelSE{2}(1.0)
+    Ktemp = zeros(10,10)
+    Kvtemp = zeros(10)
+    Zk1 = Zk[:,1]
+    KXX1 = @time kernel0(k, Zk, Zk)
+    KXz1 = @time kernel0(k, Zk, Zk1)
+    KXX2 = @time kernel!(Ktemp, k, Zk)
+    KXX3 = @time kernel!(Ktemp, k, Zk, Zk)
+    KXz2 = @time kernel!(Kvtemp, k, Zk, Zk1)
+    nothing
+end
+```
+
+We will also later want the first derivatives with respect to hyperparameters
+packed into a set of $n$-by-$n$ matrices:
+=#
+
+function dθ_kernel!(δKs :: AbstractArray, ctx :: KernelContext,
+                    X :: AbstractMatrix)
+    n, n, d = size(δKs)
+    for j = 1:n
+        xj = @view X[:,j]
+        δKjj = @view δKs[j,j,:]
+        gθ_kernel!(δKjj, ctx, xj, xj)
+        for i = j+1:n
+            xi = @view X[:,i]
+            δKij = @view δKs[i,j,:]
+            δKji = @view δKs[j,i,:]
+            gθ_kernel!(δKij, ctx, xi, xj)
+            δKji[:] .= δKij
+        end
+    end
+    δKs
+end
+
+dθ_kernel(ctx :: KernelContext, X :: AbstractMatrix) =
+    dθ_kernel!(zeros(size(X,2), size(X,2), nhypers(ctx)), ctx, X)
+
+#=
+## Cholesky and whitening
+
+In the GP setting, the kernel defines a covariance.  We say $f$ is
+distributed as a GP with mean $\mu(x)$ and covariance kernel $k(x,x')$
+to mean that the random vector $f_X$ with entries $f(x_i)$ is distributed as
+a multivariate normal with mean $\mu_X$ and covariance matrix
+$K_{XX}$.  That is,
+$$
+  p(f_X = \mu_X+y) =
+  \frac{1}{\sqrt{\det(2\pi K_{XX}})}
+  \exp\left( -\frac{1}{2} y^T K_{XX}^{-1} y \right).
+$$
+We can always subtract off the mean function in order to get a
+zero-mean random variable (and then add the mean back later if we
+wish).  In the interest of keeping notation simple, we will do this
+for the moment.
+
+Factoring the kernel matrix is useful for both theory and computation.
+For example, we note that if $K_{XX} = LL^T$ is a Cholesky
+factorization, then
+$$
+  p(f_X = y) \propto
+  \exp\left( -\frac{1}{2} (L^{-1} y)^T (L^{-1} y) \right).
+$$
+Hence, $Z = L^{-1} f_X$ is distributed as a *standard* normal random
+variable:
+$$
+  p(L^{-1} f_X = z) \propto
+  \exp\left( -\frac{1}{2} z^T z \right).
+$$
+That is, a triangular solve with $L$ is what is known as
+a "whitening transformation," mapping a random vector with correlated
+entries to a random vector with independent standard normal entries.
+Conversely, if we want to sample from our distribution for $f_X$,
+we can compute the samples as $f_X = LZ$ where $Z$ has i.i.d. standard
+normal entries.
+
+Now suppose we partition $X = \begin{bmatrix} X_1 & X_2 \end{bmatrix}$
+where data is known at the $X_1$ points and unknown at the $X_2$
+points.  We write the kernel matrix and its Cholesky factorization in
+block form as:
+$$
+  \begin{bmatrix} K_{11} & K_{12} \\ K_{21} & K_{22} \end{bmatrix} =
+  \begin{bmatrix} L_{11} & 0 \\ L_{21} & L_{22} \end{bmatrix}
+  \begin{bmatrix} L_{11}^T & L_{21}^T \\ 0 & L_{22}^T \end{bmatrix},
+$$
+and observe that
+$$\begin{aligned}
+  L_{11} L_{11}^T &= K_{11} \\
+  L_{21} &= K_{21} L_{11}^{-T} \\
+  L_{22} L_{22}^T &=
+  S := K_{22}-L_{21} L_{21}^T = K_{22} - K_{21} K_{11}^{-1} K_{12}
+\end{aligned}$$
+
+Using the Cholesky factorization as a whitening transformation,
+we have
+$$
+  \begin{bmatrix} L_{11} & 0 \\ L_{21} & L_{22} \end{bmatrix}
+  \begin{bmatrix} z_1 \\ z_2 \end{bmatrix} =
+  \begin{bmatrix} y_1 \\ y_2 \end{bmatrix},
+$$
+which we can solve by forward substitution to obtain
+$$\begin{aligned}
+  z_1 &= L_{11}^{-1} y_1 \\
+  z_2 &= L_{22}^{-1} (y_2 - L_{21} z_1).
+\end{aligned}$$
+From here, we rewrite the prior distribution as
+$$\begin{aligned}
+  p(f_{X_1} = y_1, f_{X_2} = y_2)
+  &\propto
+  \exp\left( -\frac{1}{2} \left\| \begin{bmatrix} L_{11}^{-1} y_1 \\
+  L_{22}^{-1} (y_2-L_{21} L_{11}^{-1} y_1) \end{bmatrix} \right\|^2 \right) \\
+  &=
+  \exp\left( -\frac{1}{2} y_1^T K_{11}^{-1} y_1
+  - \frac{1}{2} (y_2 - L_{21} z_1)^T S^{-1} (y_2 - L_{21} z_1) \right)
+\end{aligned}$$
+Note that $L_{21} z_1 = L_{21} L_{11}^{-1} y_1 = K_{21} K_{11}^{-1}
+y_1$.
+Therefore, the posterior conditioned on $f_{X_1} = y_1$ is
+$$\begin{aligned}
+  p(f_{X_2} = y_2 | f_{X_1} = y_1)
+  &= \frac{p(f_{X_1} = y_1, f_{X_2} = y_2)}{p(f_{X_1} = y_1)} \\
+  &\propto
+  \exp\left(
+  -\frac{1}{2}
+  (y_2 - K_{21} K_{11}^{-1} y_1)^T S^{-1}
+  (y_2 - K_{21} K_{11}^{-1} y_1)
+  \right).
+\end{aligned}$$
+That is, the Schur complement $S$ serves as the posterior variance and
+$K_{21} K_{11}^{-1} y_1 = L_{21} L_{11}^{-1} y_1$ is the posterior
+mean.  We usually write the posterior mean in terms of a weight vector
+$c$ derived from interpolating the $y_1$ points:
+$$
+  \mathbb{E}[f_{X_2} | f_{X_1} = y_1] = K_{21} c, \quad
+  K_{11} c = y_1.
+$$
+Note that in the pointwise posterior case (i.e. where $X_1$
+consists of only one point), the pointwise posterior standard
+deviation is
+$$
+  l_{22} = \sqrt{k_{22} - \|L^{-1} k_{12}\|^2}.
+$$
+
+## Cholesky in Julia
+
+A `Cholesky` object in Julia represents a Cholesky factorization.
+The main operations it supports are extracting the triangular factor
+(via `U` or `L` for the upper or lower triangular versions)
+and solving a linear system with the full matrix.  The `Cholesky`
+object itself is really a view on a matrix of storage that can
+be separately allocated.  If we call `cholesky`, new storage is
+allocated to contain the factor, and the original matrix is left
+untouched.  The mutating `cholesky!` overwrites the original storage.
+
+We are frequently going to want the Cholesky factorization of the
+kernel matrix much more than the kernel matrix itself.  We will
+therefore write some convenience functions for this.
+=#
+
+kernel_cholesky!(KXX :: AbstractMatrix, ctx :: KernelContext,
+                 X :: AbstractMatrix) =
+    cholesky!(kernel!(KXX, ctx, X))
+
+kernel_cholesky(ctx :: KernelContext, X :: AbstractMatrix) =
+    cholesky!(kernel(ctx, X))
+
+kernel_cholesky!(KXX :: AbstractMatrix, ctx :: KernelContext,
+                 X :: AbstractMatrix, s :: Real) =
+    cholesky!(kernel!(KXX, ctx, X, s))
+
+kernel_cholesky(ctx :: KernelContext, X :: AbstractMatrix, s :: Real) =
+    cholesky!(kernel(ctx, X, s))
+
+#=
+It is also useful to have a convenience function for evaluating a
+function at a set of sample points in order to compute weights:
+=#
+
+sample_eval(f, X :: AbstractMatrix) = [f(x) for x in eachcol(X)]
+sample_eval2(f, X :: AbstractMatrix) = [f(x...) for x in eachcol(X)]
+
+#=
+Because we will frequently run examples with a low-discrepancy
+sampling sequence, we put together something for that as well
+```{julia}
+function test_setup2d(f, n)
+    Zk = kronecker_quasirand(2,n)
+    y = sample_eval2(f, Zk)
+    Zk, y
+end
+
+test_setup2d(f) = test_setup2d(f,10)
+```
+
+We are now set to evaluate the posterior mean and standard deviation
+for a GP at a new point.  We will use one auxiliary vector here (this
+could be passed in if we wanted).  Note that once we have computed the
+mean field, we no longer really need $k_{Xz}$, only the piece of the
+Cholesky factor ($r_{Xz} = L_{XX}^{-1} k_{Xz}$).  Therefore we will
+use the overwriting version of the triangular solver.
+
+=#
+
+function eval_GP(KC :: Cholesky, ctx :: KernelContext, X :: AbstractMatrix,
+                 c :: AbstractVector, z :: AbstractVector)
+    kXz = kernel(ctx, X, z)
+    μz  = dot(kXz, c)
+    rXz = ldiv!(KC.L, kXz)
+    σz  = sqrt(kernel(ctx,z,z)-rXz'*rXz)
+    μz, σz
+end
+
+#=
+As usual, a demonstration and test case is a good idea.
+
+```{julia}
+let
+    # Set up sample points and test function
+    testf(x,y) = x^2 + y
+    Zk, y = test_setup2d(testf)
+    ctx = KernelSE{2}(1.0)
+
+    # Form kernel Cholesky and weights
+    KC = kernel_cholesky(ctx, Zk)
+    c = KC\y
+
+    # Evaluate true function and GP at a test point
+    z = [0.456; 0.456]
+    fz = testf(z...)
+    μz, σz = eval_GP(KC, ctx, Zk, c, z)
+
+    # Compare GP to true function
+    zscore = (fz-μz)/σz
+    println("""
+        True value:       $fz
+        Posterior mean:   $μz
+        Posterior stddev: $σz
+        z-score:          $zscore
+        """)
+end
+```
+
+## Extending Cholesky
+
+It is sometimes useful to be able to extend an existing Cholesky
+factorization stored in a submatrix without allocating any new
+storage; Julia makes this fairly easy.  The two things worth noting
+are that
+
+- The default in Julia is that the Cholesky factor is stored in the
+  upper triangle.
+- The BLAS symmetric rank-$k$ update routine (`syrk`) is in-place and
+  is generally optimized better than would be `K22 .-= R12'*R12`.
+
+=#
+
+function extend_cholesky!(Kstorage :: AbstractMatrix, n, m)
+
+    # Construct views for active part of the storage
+    R   = @view Kstorage[1:m, 1:m]
+    R11 = @view Kstorage[1:n, 1:n]
+    K12 = @view Kstorage[1:n, n+1:m]
+    K22 = @view Kstorage[n+1:m, n+1:m]
+
+    ldiv!(UpperTriangular(R11)', K12)         # R12 = R11'\K12
+    BLAS.syrk!('U', 'T', -1.0, K12, 1.0, K22) # S = K22-R12'*R12
+    cholesky!(Symmetric(K22))                 # R22 = chol(S)
+
+    # Return extended cholesky
+    Cholesky(UpperTriangular(R))
+end
+
+#=
+
+As an example of the extension, let's consider computing the
+predictive standard deviation at a new point given previous
+points.
+
+```{julia}
+let
+    Zk = kronecker_quasirand(2,10)
+    ctx = KernelSE{2}(1.0)
+    z = [0.456; 0.456]
+    w = randn(10)
+
+    # Pre-allocate storage, form K, and Cholesky factor in place.
+    Kstorage = zeros(11,11)
+    K11 = @view Kstorage[1:10,1:10]
+    KC = kernel_cholesky!(K11, ctx, Zk)
+
+    # Add a column of K to the matrix
+    K12 = @view Kstorage[1:10,11]
+    kernel!(K12, ctx, Zk, z)
+    Kstorage[11,11] = kernel(ctx, z, z)
+
+    # Extend the Cholesky factorization
+    Kfac = extend_cholesky!(Kstorage, 10, 11)
+
+    # Compare to the earlier approach
+    c = zeros(10)
+    μz, σz = eval_GP(KC, ctx, Zk, c, z)
+
+    # Relative error in computed stddev
+    @test σz ≈ Kstorage[11,11]
+
+    nothing
+end
+```
+
+## The nugget
+
+We often add a small "noise variance" term (also called a "nugget
+term") to the kernel matrix.  The name "noise variance" comes from
+the probabilistic interpretation that the observed
+function values are contaminated by some amount of mean zero Gaussian
+noise (generally assumed to be iid).  The phrase "nugget" comes from
+the historical use of Gaussian processing in geospatial statistics for
+predicting where to find mineral deposits -- noise in that case
+corresponding to nuggets of minerals that might show up in a
+particular sample.  Either, we solve the kernel system
+$$
+  \tilde{K} c = y, \quad \tilde{K} = K + \eta I.
+$$
+
+The numerical reason for including this term is because kernel
+matrices tend to become ill-conditioned as we add observations -- and
+the smoother the kernel, the more ill-conditioned the problem.  This
+has an immediate downstream impact on the numerical stability of
+essentially all the remaining tasks for the problem.  There are
+various clever ways that people consider to side-step this ill
+conditioning, but for the moment we will stick with a noise variance
+term.
+
+What is an appropriate vaule for $\eta$?  If the kernel family is
+appropriate for the smoothness of the function being modeled, then it
+may be sensible to choose $\eta$ to be as small as we can manage
+without running into numerical difficulties.  A reasonable rule of
+thumb is to choose $\eta$ around $\sqrt{\epsilon_{\mathrm{mach}}}$
+(i.e. about $10^{-8}$ in double precision).  This will be our default
+behavior.
+
+On the other hand, if the function is close to something smooth but
+has some non-smooth behavior (or high-frequency oscillations), then it
+may be appropriate to try to model the non-smooth or high-frequency
+piece as noise, and use a larger value of $\eta$.  There is usually a
+stationary point for the likelihood function that corresponds to the
+modeling assumption that the observations are almost all noise; we
+would prefer to avoid that, so we also want $\eta$ to not be too big.
+Hence, if the noise variance is treated as a tunable hyperparameter,
+we usually work with $\log \eta$ rather than with $\eta$, and tune
+subject to upper and lower bounds on $\log \eta$.
+
+=#

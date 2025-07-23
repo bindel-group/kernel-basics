@@ -17,7 +17,8 @@ time it is invoked; we would like to be able to write into existing
 storage, if storage has already been allocated.  Second, we want to
 exploit symmetry when computing $K_{XX}$.  Hence, we will put together
 a few helper functions for these tasks:
-```{julia}
+
+```{.julia}
 function kernel!(KXX :: AbstractMatrix, k :: KernelContext,
                  X :: AbstractMatrix)
     for j = 1:size(X,2)
@@ -62,11 +63,13 @@ kernel(k :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
 
 kernel(k :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
     kernel!(zeros(size(X,2), size(Y,2)), k, X, Y)
+
 ```
 
 Sometimes, we want to incorporate a shift in the kernel matrix
 construction as well.
-```{julia}
+
+```{.julia}
 function kernel!(KXX :: AbstractMatrix, ctx :: KernelContext,
                  X :: AbstractMatrix, η :: Real)
     for j = 1:size(X,2)
@@ -84,8 +87,8 @@ end
 
 kernel(ctx :: KernelContext, X :: AbstractMatrix, s :: Real) =
     kernel!(zeros(size(X,2), size(X,2)), ctx, X, s)
-```
 
+```
 
 It's always useful to sanity check that these computations are done
 correctly, or at least that there is internal consistency between the versions:
@@ -134,7 +137,8 @@ end
 
 We will also later want the first derivatives with respect to hyperparameters
 packed into a set of $n$-by-$n$ matrices:
-```{julia}
+
+```{.julia}
 function dθ_kernel!(δKs :: AbstractArray, ctx :: KernelContext,
                     X :: AbstractMatrix)
     n, n, d = size(δKs)
@@ -155,8 +159,8 @@ end
 
 dθ_kernel(ctx :: KernelContext, X :: AbstractMatrix) =
     dθ_kernel!(zeros(size(X,2), size(X,2), nhypers(ctx)), ctx, X)
-```
 
+```
 
 ## Cholesky and whitening
 
@@ -276,7 +280,8 @@ untouched.  The mutating `cholesky!` overwrites the original storage.
 We are frequently going to want the Cholesky factorization of the
 kernel matrix much more than the kernel matrix itself.  We will
 therefore write some convenience functions for this.
-```{julia}
+
+```{.julia}
 kernel_cholesky!(KXX :: AbstractMatrix, ctx :: KernelContext,
                  X :: AbstractMatrix) =
     cholesky!(kernel!(KXX, ctx, X))
@@ -290,13 +295,16 @@ kernel_cholesky!(KXX :: AbstractMatrix, ctx :: KernelContext,
 
 kernel_cholesky(ctx :: KernelContext, X :: AbstractMatrix, s :: Real) =
     cholesky!(kernel(ctx, X, s))
+
 ```
 
 It is also useful to have a convenience function for evaluating a
 function at a set of sample points in order to compute weights:
-```{julia}
+
+```{.julia}
 sample_eval(f, X :: AbstractMatrix) = [f(x) for x in eachcol(X)]
 sample_eval2(f, X :: AbstractMatrix) = [f(x...) for x in eachcol(X)]
+
 ```
 
 Because we will frequently run examples with a low-discrepancy
@@ -318,7 +326,8 @@ mean field, we no longer really need $k_{Xz}$, only the piece of the
 Cholesky factor ($r_{Xz} = L_{XX}^{-1} k_{Xz}$).  Therefore we will
 use the overwriting version of the triangular solver.
 
-```{julia}
+
+```{.julia}
 function eval_GP(KC :: Cholesky, ctx :: KernelContext, X :: AbstractMatrix,
                  c :: AbstractVector, z :: AbstractVector)
     kXz = kernel(ctx, X, z)
@@ -327,6 +336,7 @@ function eval_GP(KC :: Cholesky, ctx :: KernelContext, X :: AbstractMatrix,
     σz  = sqrt(kernel(ctx,z,z)-rXz'*rXz)
     μz, σz
 end
+
 ```
 
 As usual, a demonstration and test case is a good idea.
@@ -370,7 +380,8 @@ are that
 - The BLAS symmetric rank-$k$ update routine (`syrk`) is in-place and
   is generally optimized better than would be `K22 .-= R12'*R12`.
 
-```{julia}
+
+```{.julia}
 function extend_cholesky!(Kstorage :: AbstractMatrix, n, m)
 
     # Construct views for active part of the storage
@@ -386,7 +397,9 @@ function extend_cholesky!(Kstorage :: AbstractMatrix, n, m)
     # Return extended cholesky
     Cholesky(UpperTriangular(R))
 end
+
 ```
+
 
 As an example of the extension, let's consider computing the
 predictive standard deviation at a new point given previous
@@ -465,4 +478,5 @@ would prefer to avoid that, so we also want $\eta$ to not be too big.
 Hence, if the noise variance is treated as a tunable hyperparameter,
 we usually work with $\log \eta$ rather than with $\eta$, and tune
 subject to upper and lower bounds on $\log \eta$.
+
 
