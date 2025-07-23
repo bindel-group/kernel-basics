@@ -11,19 +11,21 @@ kernel0(k :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
 kernel0(k :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
     [k(x,z) for x in eachcol(X)]
 ```
+
 There are two minor drawbacks to forming kernel matrices this way.
 First, the computation allocates a new output matrix or vector each
 time it is invoked; we would like to be able to write into existing
 storage, if storage has already been allocated.  Second, we want to
-exploit symmetry when computing $K_{XX}$.  Hence, we will put together
-a few helper functions for these tasks:
+exploit symmetry when computing $K_{XX}$.  Sometimes, we want to
+incorporate a shift in the construction of $K_{XX}$ as well.  Hence,
+we will put together a few helper functions for these tasks:
 
 ```{.julia}
 function kernel!(KXX :: AbstractMatrix, k :: KernelContext,
-                 X :: AbstractMatrix)
+                 X :: AbstractMatrix, η :: Real = 0.0)
     for j = 1:size(X,2)
         xj = @view X[:,j]
-        KXX[j,j] = k(xj, xj)
+        KXX[j,j] = k(xj, xj) + η
         for i = 1:j-1
             xi = @view X[:,i]
             kij = k(xi, xj)
@@ -55,38 +57,14 @@ function kernel!(KXY :: AbstractMatrix, k :: KernelContext,
     KXY
 end
 
-kernel(k :: KernelContext, X :: AbstractMatrix) =
-    kernel!(zeros(size(X,2), size(X,2)), k, X)
+kernel(k :: KernelContext, X :: AbstractMatrix, η :: Real = 0.0) =
+    kernel!(zeros(size(X,2), size(X,2)), k, X, η)
 
 kernel(k :: KernelContext, X :: AbstractMatrix, z :: AbstractVector) =
     kernel!(zeros(size(X,2)), k, X, z)
 
 kernel(k :: KernelContext, X :: AbstractMatrix, Y :: AbstractMatrix) =
     kernel!(zeros(size(X,2), size(Y,2)), k, X, Y)
-
-```
-
-Sometimes, we want to incorporate a shift in the kernel matrix
-construction as well.
-
-```{.julia}
-function kernel!(KXX :: AbstractMatrix, ctx :: KernelContext,
-                 X :: AbstractMatrix, η :: Real)
-    for j = 1:size(X,2)
-        xj = @view X[:,j]
-        KXX[j,j] = kernel(ctx, xj, xj) + η
-        for i = 1:j-1
-            xi = @view X[:,i]
-            kij = kernel(ctx, xi, xj)
-            KXX[i,j] = kij
-            KXX[j,i] = kij
-        end
-    end
-    KXX
-end
-
-kernel(ctx :: KernelContext, X :: AbstractMatrix, s :: Real) =
-    kernel!(zeros(size(X,2), size(X,2)), ctx, X, s)
 
 ```
 

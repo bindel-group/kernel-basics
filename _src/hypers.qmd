@@ -160,7 +160,7 @@ let
     Δδlogdet(A, δA, ΔA, ΔδA) = tr(A\ΔδA)-tr((A\ΔA)*(A\δA))
 
     @test δlogdet(A,δA) ≈ dot(inv(A'), δA)
-    @test δlogdet(A,δA) ≈ diff_fd(A->log(det(A)),A,δA) rtol=1e-6
+    @test δlogdet(A,δA) ≈ diff_fd(s->log(det(A+s*δA))) rtol=1e-6
     @test Δδlogdet(A,δA,ΔA,ΔδA) ≈ diff_fd(s->δlogdet(A+s*ΔA,δA+s*ΔδA)) rtol=1e-6
 end
 ```

@@ -321,10 +321,10 @@ their derivatives.
     Zk, y = test_setup2d((x,y) -> x^2 + cos(3*y))
     z, dz = [0.47; 0.47], [0.132; 0.0253]
     gp = GPPContext(KernelSE{2}(0.5), 1e-8, Zk, y)
-    @test gx_mean(gp,z)'*dz ≈ diff_fd(z->mean(gp,z),z,dz) rtol=1e-6
-    @test Hx_mean(gp,z)*dz ≈ diff_fd(z->gx_mean(gp,z),z,dz) rtol=1e-6
-    @test gx_var(gp,z)'*dz ≈ diff_fd(z->var(gp,z),z,dz) rtol=1e-6
-    @test Hx_var(gp,z)*dz ≈ diff_fd(z->gx_var(gp,z),z,dz) rtol=1e-6
+    @test gx_mean(gp,z)'*dz ≈ diff_fd(s->mean(gp,z+s*dz))    rtol=1e-6
+    @test Hx_mean(gp,z)*dz  ≈ diff_fd(s->gx_mean(gp,z+s*dz)) rtol=1e-6
+    @test gx_var(gp,z)'*dz  ≈ diff_fd(s->var(gp,z+s*dz))     rtol=1e-6
+    @test Hx_var(gp,z)*dz   ≈ diff_fd(s->gx_var(gp,z+s*dz))  rtol=1e-6
 end
 nothing
 ```

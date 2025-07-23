@@ -9,14 +9,6 @@ A finite-difference tester is a useful thing to have.
 Compute a centered difference estimate of f'(x) with step size h.
 """
 diff_fd(f, x=0.0; h=1e-6) = (f(x+h)-f(x-h))/(2h)
-
-
-"""
-    diff_fd(f, x, dx; h=1e-6)
-
-Computed centered different estimate of d/ds f(x+sdx) with step h.
-"""
-diff_fd(f, x, dx; h=1e-6) = diff_fd(s->f(x+s*dx), h=h)
 ```
 
 
