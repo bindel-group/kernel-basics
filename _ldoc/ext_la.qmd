@@ -1,0 +1,205 @@
+# Extra linear algebra
+
+Most of the work in kernel methods is in doing linear algebra.  This
+is part of why Julia (which has pretty good linear algebra libraries)
+is an attractive implementation language.  However there are still some
+slightly-more-specialized functions that Julia does *not* have that we
+will need later, and so we provide this functionality here.
+
+## Extended Cholesky
+
+A `Cholesky` object in Julia represents a Cholesky factorization.
+The main operations it supports are extracting the triangular factor
+(via `U` or `L` for the upper or lower triangular versions)
+and solving a linear system with the full matrix.  The `Cholesky`
+object itself is really a view on a matrix of storage that can
+be separately allocated.  If we call `cholesky`, new storage is
+allocated to contain the factor, and the original matrix is left
+untouched.  The mutating `cholesky!` overwrites the original storage.
+
+It is sometimes useful to be able to extend an existing Cholesky
+factorization stored in a submatrix without allocating any new
+storage; Julia makes this fairly easy.  The two things worth noting
+are that
+
+- The default in Julia is that the Cholesky factor is stored in the
+  upper triangle.
+- The BLAS symmetric rank-$k$ update routine (`syrk`) is in-place and
+  is generally optimized better than would be `A22 .-= R12'*R12`.
+
+
+```{.julia}
+function extend_cholesky!(Astorage :: AbstractMatrix, n, m)
+
+    # Construct views for active part of the storage
+    R   = @view Astorage[1:m, 1:m]
+    R11 = @view Astorage[1:n, 1:n]
+    A12 = @view Astorage[1:n, n+1:m]
+    A22 = @view Astorage[n+1:m, n+1:m]
+
+    ldiv!(UpperTriangular(R11)', A12)         # R12 = R11'\A12
+    BLAS.syrk!('U', 'T', -1.0, A12, 1.0, A22) # S = A22-R12'*R12
+    cholesky!(Symmetric(A22))                 # R22 = chol(S)
+
+    # Return extended cholesky view
+    Cholesky(UpperTriangular(R))
+end
+
+
+```
+
+## Tridiagonal reduction
+
+Julia does not directly provide a routine for computing the factorization
+of a symmetric $A$ as
+$$
+  A = Q T Q^T
+$$
+where $T$ is a tridiagonal matrix and $Q$ is orthogonal.  However, it
+does include a Householder QR factorization, and we re-use the
+implementations of the reflector computations and applications.
+
+The matrix $Q$ is written as a product of Householder reflectors
+$$
+  I - \tau v v^T
+$$
+where $\tau$ is a real scalar and $v$ is a vector with $v_{1:i-1} = 0$ and
+$v_i = 1$.  The elements $v_{i+1:n}$ are stored in the part of the original
+$A$ storage below the first diagonal; the scalars $\tau$ are stored in the
+last column.
+
+```{.julia}
+function tridiag_reduce!(A)
+    n = size(A,1)
+    τ = view(A,1:n,n)
+    for k = 1:n-2
+        x = view(A, k+1:n,k)
+        τk = LinearAlgebra.reflector!(x)
+        LinearAlgebra.reflectorApply!(x, τk, view(A, k+1:n, k+1:n))
+        LinearAlgebra.reflectorApply!(x, τk, view(A, k+1:n, k+1:n)')
+        τ[k] = τk
+    end
+end
+
+```
+
+We want to be able to apply $Q$ and $Q^T$ to vectors as well.
+
+```{.julia}
+function tridiag_applyQ!(A, y)
+    n = length(y)
+    τ = view(A,1:n,n)
+    for k = n-2:-1:1
+        x = view(A, k+1:n,k)
+        LinearAlgebra.reflectorApply!(x, τ[k], view(y, k+1:n))
+    end
+    y
+end
+
+function tridiag_applyQT!(A, y)
+    n = length(y)
+    τ = view(A,1:n,n)
+    for k = 1:n-2
+        x = view(A, k+1:n,k)
+        LinearAlgebra.reflectorApply!(x, τ[k], view(y, k+1:n))
+    end
+    y
+end
+
+```
+
+We also want to be able to extract the parameters for the tridiagonal.
+
+```{.julia}
+function tridiag_params!(A, alpha, beta)
+    n = size(A,1)
+    for j = 1:n-1
+        alpha[j] = A[j,j]
+        beta[j] = A[j+1,j]
+    end
+    alpha[n] = A[n,n]
+    alpha, beta
+end
+
+tridiag_params(A) = tridiag_params!(A, zeros(size(A,1)), zeros(size(A,1)-1))
+get_tridiag(A) = SymTridiagonal(tridiag_params(A)...)
+
+```
+
+## Tridiagonal factorization
+
+Julia provides direct access to a positive definite tridiagonal
+$LDL^T$ factorization with the [`LAPACK.pttrf!`][pttrf] routine,
+and a triangular solver with this factorization via
+[`LAPACK.pttrs!`][pttrs].  That is, we factor $T = LDL^T$ where
+$$
+T =
+\begin{bmatrix}
+\alpha_1 & \beta_1 & & \\
+\beta_1 & \alpha_2 & \beta_2 & \\
+        & \ddots & \ddots & \ddots \\
+        &        & \alpha_{n-1} & \beta_{n-1} \\
+        &        & \beta_{n-1} & \alpha_{n}
+\end{bmatrix}, \quad
+L =
+\begin{bmatrix}
+1 & & & & \\
+l_1 & 1 & & & \\
+    & l_2 & 1 & & \\
+    &     & \ddots & \ddots & \\
+    &     &        & l_{n-1} & 1
+\end{bmatrix}
+$$
+and $D$ is diagonal with entries $d_1, \ldots, d_n$.
+The factorization is computed by the recurrence
+$$\begin{aligned}
+  d_1 &= \alpha_1 \\
+  l_j &= \beta_j/d_j \\
+  d_j &= \alpha_j - \beta_j l_j, \quad j > 1
+\end{aligned}$$
+This is extremely similar to the Cholesky recurrence, except that we save
+a little arithmetic cost because we don't need to take square roots.
+
+[pttrf]: https://docs.julialang.org/en/v1/stdlib/LinearAlgebra/#LinearAlgebra.LAPACK.pttrf!
+[pttrs]: https://docs.julialang.org/en/v1/stdlib/LinearAlgebra/#LinearAlgebra.LAPACK.pttrs!
+
+## Tridiagonal inverse trace
+
+A somewhat specialized building block that we will use is to compute
+$\tr(T^{-1})$ where $T$ is a tridiagonal.  If we assume that $T$ has
+been factored as $T = LDL^T$, and let $X = L^{-1}$, then
+$$
+  \tr(T^{-1}) = \tr(L^{-T} D^{-1} L^{-1}).
+$$
+Let $X = D^{-1/2} L^{-1} = \begin{bmatrix} x_1 & \ldots & x_n \end{bmatrix}$; then
+$$
+  \tr(T^{-1}) = \tr(X^T X) = \|X\|_F^2.
+$$
+The equation $XL = D^{-1/2}I$ gives us that
+$$\begin{aligned}
+  x_n &= e_n/\sqrt{d_n} \\
+  x_j &= e_j/\sqrt{d_j} - l_j x_{j+1}, \quad j < n.
+\end{aligned}$$
+Noting that $e_j \perp x_{j+1}$ (by lower triangularity of $X$),
+we have (by the Pythangorean
+theorem) that
+$$\begin{aligned}
+  \|x_n\|^2 &= 1/d_n \\
+  \|x_j\|^2 &= 1/d_j + l_j^2 \|x_{j+1}\|^2, \quad j < n.
+\end{aligned}$$
+Putting this together, we have an $O(n)$ algorithm for computing $\tr(T^{-1})$.
+
+```{.julia}
+function tridiag_tr_invLDLt(d, l)
+    n = length(d)
+    xn2 = 1.0/d[n]
+    tr_invT = xn2
+    for j = n-1:-1:1
+        xn2 = 1.0/d[j] + l[j]^2 * xn2
+        tr_invT += xn2
+    end
+    tr_invT
+end
+```
+
+
