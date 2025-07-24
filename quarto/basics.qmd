@@ -22,15 +22,15 @@ using SpecialFunctions
 using Optim
 using Test
 
-include("_src/testing.jl")
-include("_src/ext_la.jl")
-include("_src/sample.jl")
-include("_src/kfuns.jl")
-include("_src/kmats.jl")
-include("_src/gpp.jl")
-include("_src/hypers.jl")
-include("_src/acquisition.jl")
-include("_src/bo_step.jl")
+include("../src/testing.jl")
+include("../src/ext_la.jl")
+include("../src/sample.jl")
+include("../src/kfuns.jl")
+include("../src/kmats.jl")
+include("../src/gpp.jl")
+include("../src/hypers.jl")
+include("../src/acquisition.jl")
+include("../src/bo_step.jl")
 ```
 
 ::: {.content-hidden unless-format="html"}
