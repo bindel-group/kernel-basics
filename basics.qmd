@@ -23,6 +23,7 @@ using Optim
 using Test
 
 include("_src/testing.jl")
+include("_src/ext_la.jl")
 include("_src/sample.jl")
 include("_src/kfuns.jl")
 include("_src/kmats.jl")
@@ -67,6 +68,9 @@ The basic moving pieces are:
 - Additional numerical tricks
 
 {{< include _ldoc/testing.qmd >}}
+
+{{< include _ldoc/ext_la.qmd >}}
+{{< include _ldoc/test_ext_la.qmd >}}
 
 {{< include _ldoc/sample.qmd >}}
 

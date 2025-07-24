@@ -28,7 +28,7 @@ end
     @test Href[1,1] ≈ diff_fd(ℓ->testf(ℓ,z)[2][1], ℓ) rtol=1e-6
     @test Href[1,2] ≈ diff_fd(ℓ->testf(ℓ,z)[2][2], ℓ) rtol=1e-6
     @test Href[2,2] ≈ diff_fd(z->testf(ℓ,z)[2][2], z) rtol=1e-6
-    @test Href[1,2] ≈ Href[2,1]    
+    @test Href[1,2] ≈ Href[2,1]
 end
 
 @testset "Test reduced NLL consistency" begin
@@ -50,7 +50,7 @@ end
     gp_SE_nllr(ℓ,z) = nllr(GPPContext(KernelSE{2}(ℓ), exp(z), Zk, y))
     g = gθz_nllr(GPPContext(KernelSE{2}(ℓ), s, Zk, y))
     @test g[1] ≈ diff_fd(ℓ->gp_SE_nllr(ℓ,z), ℓ) rtol=1e-6
-    @test g[2] ≈ diff_fd(z->gp_SE_nllr(ℓ,z), z) rtol=1e-6    
+    @test g[2] ≈ diff_fd(z->gp_SE_nllr(ℓ,z), z) rtol=1e-6
 end
 
 @testset "Test reduced NLL Hessian" begin
@@ -85,14 +85,16 @@ end
     ϕ̄1 = nllr(KC, c, y)
 
     # Reduced NLL computation
-    tridiag_reduce!(K, y)
-    alpha, beta = tridiag_params(K, η)
-    cholesky_T!(alpha, beta)
+    tridiag_reduce!(K)
+    tridiag_applyQT!(K, y)
+    alpha, beta = tridiag_params(K)
+    alpha[:] .+= η
+    LAPACK.pttrf!(alpha, beta)
     c = copy(y)
-    cholesky_T_solve!(alpha, beta, c)
+    LAPACK.pttrs!(alpha, beta, c)
     data2 = c'*y
-    logdet2 = sum(log.(alpha))
-    trinv2 = cholesky_trinvT(alpha, beta)
+    logdet2 = sum(log.(alpha))/2
+    trinv2 = tridiag_tr_invLDLt(alpha, beta)
     ϕ̄2, dϕ̄ = nllrT!(K, y, η, alpha, beta, c)
 
     @test data1 ≈ data2
@@ -106,6 +108,7 @@ end
     ctx = KernelSE{2}(1.0)
     η = 1e-3
     K = kernel(ctx, Zk)
-    tridiag_reduce!(K, y)
-    @test nllrT(K, y, η)[2] ≈ diff_fd(η->nllrT(K, y, η)[1], η) rtol=1e-6    
+    tridiag_reduce!(K)
+    tridiag_applyQT!(K, y)
+    @test nllrT(K, y, η)[2] ≈ diff_fd(η->nllrT(K, y, η)[1], η) rtol=1e-6
 end

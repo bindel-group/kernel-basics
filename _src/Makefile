@@ -1,4 +1,5 @@
 QMD=	../_ldoc/testing.qmd \
+	../_ldoc/ext_la.qmd \
 	../_ldoc/sample.qmd \
 	../_ldoc/kfuns.qmd \
 	../_ldoc/kmats.qmd \
@@ -6,6 +7,7 @@ QMD=	../_ldoc/testing.qmd \
 	../_ldoc/hypers.qmd \
 	../_ldoc/acquisition.qmd \
 	../_ldoc/bo_step.qmd \
+	../_ldoc/test_ext_la.qmd \
 	../_ldoc/test_kfuns.qmd \
 	../_ldoc/test_kmats.qmd \
 	../_ldoc/test_gpp.qmd \

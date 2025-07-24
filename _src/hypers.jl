@@ -650,9 +650,7 @@ about our use of factorizations in order to make computing the reduced
 NLL and its derivatives with respect to $\eta$ sufficiently cheap so
 that we don't mind doing several of them.
 
-### Tridiagonal reduction
-
-Fortunately, we can evaluate the reduced NLL and its derivatives
+We could evaluate the reduced NLL and its derivatives
 quickly by solving an eigenvalue problem -- an up-front $O(n^3)$ cost
 followed by an $O(n)$ cost for evaluating the NLL and derivatives.
 Better yet, we do not need to get all the way to an eigenvalue
@@ -668,144 +666,12 @@ $$\begin{aligned}
   y^T (K+\eta I)^{-1} y &= \tilde{y}^T (T + \eta I)^{-1} \tilde{y}.
 \end{aligned}$$
 Therefore, all the computations that go into the reduced NLL and its
-derivatives can be rephrased in terms of $T$ and $\tilde{y}$.
+derivatives can be rephrased in terms of $T$ and $\tilde{y}$.  Using
+the factorization $T + \eta I = LDL^T$, we can compute
+$\log \det(K + \eta I) = \sum_i \log d_i$, and we previously also wrote
+a short code to compute $\tr((K+\eta I)^{-1}) = \tr((T+\eta I)^{-1})$
+using the $LDL^T$ factorization.
 
-The Julia linear algebra library does not include a routine for
-tridiagonal reduction, but it does include a Householder QR
-factorization routine, and we can re-use the implementations of the
-reflector computation and application.  The following function
-overwrites $K$ and $y$ with the entries of $T$ (in the main diagonal
-and subdiagonal entries) $\tilde{y}$.
-
-=#
-
-function tridiag_reduce!(K)
-    n = size(K,1)
-    τ = view(K,1:n,n)
-    for k = 1:n-2
-        x = view(K, k+1:n,k)
-        τk = LinearAlgebra.reflector!(x)
-        LinearAlgebra.reflectorApply!(x, τk, view(K, k+1:n, k+1:n))
-        LinearAlgebra.reflectorApply!(x, τk, view(K, k+1:n, k+1:n)')
-        τ[k] = τk
-    end
-end
-
-function tridiag_transform!(K, y)
-    n = length(y)
-    τ = view(K,1:n,n)
-    for k = 1:n-2
-        x = view(K, k+1:n,k)
-        LinearAlgebra.reflectorApply!(x, τ[k], view(y, k+1:n))
-    end
-end
-
-function tridiag_reduce!(K, y)
-    tridiag_reduce!(K)
-    tridiag_transform!(K, y)
-end
-
-#=
-It's helpful to extract the parameters for the tridiagonal
-=#
-
-function tridiag_params!(K, alpha, beta, s=0.0)
-    n = size(K,1)
-    for j = 1:n-1
-        alpha[j] = K[j,j] + s
-        beta[j] = K[j+1,j]
-    end
-    alpha[n] = K[n,n] + s
-end
-
-function tridiag_params(K, s=0.0)
-    n = size(K,1)
-    alpha = zeros(n)
-    beta = zeros(n-1)
-    tridiag_params!(K, alpha, beta, s)
-    alpha, beta
-end
-
-get_tridiag(K) = SymTridiagonal(tridiag_params(K)...)
-
-#=
-And we want to be able to compute the Cholesky factorization in place
-and use it to solve linear systems and to
-=#
-
-function cholesky_T!(alpha, beta)
-    n = length(alpha)
-    for j = 1:n-1
-        alpha[j] = sqrt(alpha[j])
-        beta[j] /= alpha[j]
-        alpha[j+1] -= beta[j]^2
-    end
-    alpha[n] = sqrt(alpha[n])
-end
-
-function cholesky_T_Lsolve!(alpha, beta, y)
-    n = length(alpha)
-    y[1] /= alpha[1]
-    for j = 2:n
-        y[j] = (y[j]-beta[j-1]*y[j-1])/alpha[j]
-    end
-    y
-end
-
-function cholesky_T_Rsolve!(alpha, beta, y)
-    n = length(alpha)
-    y[n] /= alpha[n]
-    for j = n-1:-1:1
-        y[j] = (y[j]-beta[j]*y[j+1])/alpha[j]
-    end
-    y
-end
-
-function cholesky_T_solve!(alpha, beta, y)
-    cholesky_T_Lsolve!(alpha, beta, y)
-    cholesky_T_Rsolve!(alpha, beta, y)
-    y
-end
-
-#=
-The negative log likelihood in this case involves $\tr(K^{-1}) =
-\tr(T^{-1})$.  Given a Cholesky factorization $T = L^T L$, we have
-$$
-  \tr(T^{-1}) = \tr(L^{-T} L^{-1}) = \|L^{-1}\|_F^2
-$$
-Let $X = L^{-1}$ and $x_j = L^{-1} e_j$.  Then the equation
-$XL = I$ gives us the recurrence
-$$\begin{aligned}
-  \alpha_n x_n &= e_n \\
-  \alpha_j x_j + \beta_j x_{j+1} &= e_j, \quad j < n
-\end{aligned}$$
-where $\alpha$ and $\beta$ denote the diagonal and off-diagonal
-entries of the Cholesky factor.  We can rewrite this as
-$$\begin{aligned}
-  x_n &= e_n/\alpha_n \\
-  x_j &= (e_j - \beta_j x_{j+1})/\alpha_j, \quad j < n
-\end{aligned}$$
-Note that $x_{j+1} \perp e_j$, and so by the Pythagorean theorem,
-$$\begin{aligned}
-  \|x_n\|^2 &= 1/\alpha_n^2 \\
-  \|x_j\|^2 &= (1 + \beta_j^2 \|x_{j+1}\|^2)/\alpha_j^2, \quad j < n
-\end{aligned}$$
-Running this recurrence backward and summing the $\|x_j\|^2$ gives us
-an $O(n)$ algorithm for computing $\tr(T^{-1})$
-=#
-
-function cholesky_trinvT(alpha, beta)
-    n = length(alpha)
-    n2x = 1.0/alpha[n]^2
-    n2xsum = n2x
-    for j = n-1:-1:1
-        n2x = (1.0 + beta[j]^2*n2x)/alpha[j]^2
-        n2xsum += n2x
-    end
-    n2xsum
-end
-
-#=
 Putting this all together, we have the following code for computing
 the reduced negative log likelihood and its derivative after a
 tridiagonal reduction.
@@ -813,21 +679,23 @@ tridiagonal reduction.
 
 function nllrT!(T, y, s, alpha, beta, c)
     n = length(y)
-    tridiag_params!(T, alpha, beta, s)
+    tridiag_params!(T, alpha, beta)
+    alpha[:] .+= s
     c[:] .= y
-    cholesky_T!(alpha, beta)
-    cholesky_T_solve!(alpha, beta, c)
+    LAPACK.pttrf!(alpha, beta)
+    LAPACK.pttrs!(alpha, beta, c)
     cTy = c'*y
     Copt = cTy/n
 
     # Compute NLL
-    ϕ̄ = n/2*(log(cTy) + log(2π) + 1 - log(n))
+    ϕ̄ = n*(log(cTy) + log(2π) + 1 - log(n))
     for j = 1:n
         ϕ̄ += log(alpha[j])
     end
+    ϕ̄ /= 2.0
 
     # Compute NLL derivative
-    dϕ̄ = (cholesky_trinvT(alpha, beta) - (c'*c)/Copt)/2
+    dϕ̄ = (tridiag_tr_invLDLt(alpha, beta) - (c'*c)/Copt)/2
 
     ϕ̄, dϕ̄
 end
@@ -835,14 +703,12 @@ end
 function nllrT(T, y, s)
     n = length(y)
     alpha = zeros(n)
-    beta = zeros(n)
+    beta = zeros(n-1)
     c = zeros(n)
     nllrT!(T, y, s, alpha, beta, c)
 end
 
 #=
-### Optimizing noise variance
-
 The main cost of anything to do with noise variance is the initial
 tridiagonal reduction.  After that, each step costs only $O(n)$, so we
 don't need to be too penny-pinching about the cost of doing
@@ -897,14 +763,15 @@ function tridiagonalize!(gp :: GPPContext)
     y = view(gp.scratch,1:gp.n,1)
     kernel!(K, gp.ctx, getX(gp))
     copy!(y, gety(gp))
-    tridiag_reduce!(K, y)
+    tridiag_reduce!(K)
+    tridiag_applyQT!(K, y)
 end
 
 function nllrT!(gp :: GPPContext, η :: Float64)
     K     = getK(gp)
     y     = view(gp.scratch,1:gp.n,1)
     alpha = view(gp.scratch,1:gp.n,2)
-    beta  = view(gp.scratch,1:gp.n,3)
+    beta  = view(gp.scratch,1:gp.n-1,3)
     c     = getc(gp)
     nllrT!(K,y,η,alpha,beta,c)
 end
@@ -917,7 +784,7 @@ function min_nllrT!(gp :: GPPContext, ηmin, ηmax;
     K     = getK(gp)
     y     = view(gp.scratch,1:gp.n,1)
     alpha = view(gp.scratch,1:gp.n,2)
-    beta  = view(gp.scratch,1:gp.n,3)
+    beta  = view(gp.scratch,1:gp.n-1,3)
     c     = getc(gp)
     ηopt, ϕ, dϕ = min_nllrT!(K,y,ηmin,ηmax,alpha,beta,c,
                              nsamp=nsamp, niter=niter)

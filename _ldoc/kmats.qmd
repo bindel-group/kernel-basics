@@ -220,16 +220,7 @@ $$
   l_{22} = \sqrt{k_{22} - \|L^{-1} k_{12}\|^2}.
 $$
 
-## Cholesky in Julia
-
-A `Cholesky` object in Julia represents a Cholesky factorization.
-The main operations it supports are extracting the triangular factor
-(via `U` or `L` for the upper or lower triangular versions)
-and solving a linear system with the full matrix.  The `Cholesky`
-object itself is really a view on a matrix of storage that can
-be separately allocated.  If we call `cholesky`, new storage is
-allocated to contain the factor, and the original matrix is left
-untouched.  The mutating `cholesky!` overwrites the original storage.
+## Kernel Cholesky
 
 We are frequently going to want the Cholesky factorization of the
 kernel matrix much more than the kernel matrix itself.  We will
@@ -297,74 +288,6 @@ let
         Posterior stddev: $σz
         z-score:          $zscore
         """)
-end
-```
-
-## Extending Cholesky
-
-It is sometimes useful to be able to extend an existing Cholesky
-factorization stored in a submatrix without allocating any new
-storage; Julia makes this fairly easy.  The two things worth noting
-are that
-
-- The default in Julia is that the Cholesky factor is stored in the
-  upper triangle.
-- The BLAS symmetric rank-$k$ update routine (`syrk`) is in-place and
-  is generally optimized better than would be `K22 .-= R12'*R12`.
-
-
-```{.julia}
-function extend_cholesky!(Kstorage :: AbstractMatrix, n, m)
-
-    # Construct views for active part of the storage
-    R   = @view Kstorage[1:m, 1:m]
-    R11 = @view Kstorage[1:n, 1:n]
-    K12 = @view Kstorage[1:n, n+1:m]
-    K22 = @view Kstorage[n+1:m, n+1:m]
-
-    ldiv!(UpperTriangular(R11)', K12)         # R12 = R11'\K12
-    BLAS.syrk!('U', 'T', -1.0, K12, 1.0, K22) # S = K22-R12'*R12
-    cholesky!(Symmetric(K22))                 # R22 = chol(S)
-
-    # Return extended cholesky
-    Cholesky(UpperTriangular(R))
-end
-
-```
-
-
-As an example of the extension, let's consider computing the
-predictive standard deviation at a new point given previous
-points.
-
-```{julia}
-let
-    Zk = kronecker_quasirand(2,10)
-    ctx = KernelSE{2}(1.0)
-    z = [0.456; 0.456]
-    w = randn(10)
-
-    # Pre-allocate storage, form K, and Cholesky factor in place.
-    Kstorage = zeros(11,11)
-    K11 = @view Kstorage[1:10,1:10]
-    KC = kernel_cholesky!(K11, ctx, Zk)
-
-    # Add a column of K to the matrix
-    K12 = @view Kstorage[1:10,11]
-    kernel!(K12, ctx, Zk, z)
-    Kstorage[11,11] = kernel(ctx, z, z)
-
-    # Extend the Cholesky factorization
-    Kfac = extend_cholesky!(Kstorage, 10, 11)
-
-    # Compare to the earlier approach
-    c = zeros(10)
-    μz, σz = eval_GP(KC, ctx, Zk, c, z)
-
-    # Relative error in computed stddev
-    @test σz ≈ Kstorage[11,11]
-
-    nothing
 end
 ```
 
