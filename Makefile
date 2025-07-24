@@ -27,6 +27,9 @@ preview: ${QMD}
 render: ${QMD}
 	(cd quarto; quarto render)
 
+publish: ${QMD}
+	(cd quarto; quarto publish gh-pages basics.qmd)
+
 test:
 	(cd src; julia run_tests.jl)
 
