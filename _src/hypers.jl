@@ -679,15 +679,30 @@ and subdiagonal entries) $\tilde{y}$.
 
 =#
 
-function tridiag_reduce!(K, y)
-    n = length(y)
+function tridiag_reduce!(K)
+    n = size(K,1)
+    τ = view(K,1:n,n)
     for k = 1:n-2
         x = view(K, k+1:n,k)
         τk = LinearAlgebra.reflector!(x)
-        LinearAlgebra.reflectorApply!(x, τk, view(y, k+1:n))
         LinearAlgebra.reflectorApply!(x, τk, view(K, k+1:n, k+1:n))
         LinearAlgebra.reflectorApply!(x, τk, view(K, k+1:n, k+1:n)')
+        τ[k] = τk
     end
+end
+
+function tridiag_transform!(K, y)
+    n = length(y)
+    τ = view(K,1:n,n)
+    for k = 1:n-2
+        x = view(K, k+1:n,k)
+        LinearAlgebra.reflectorApply!(x, τ[k], view(y, k+1:n))
+    end
+end
+
+function tridiag_reduce!(K, y)
+    tridiag_reduce!(K)
+    tridiag_transform!(K, y)
 end
 
 #=
