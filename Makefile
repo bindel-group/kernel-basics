@@ -31,7 +31,7 @@ publish: ${QMD}
 	(cd quarto; quarto publish gh-pages basics.qmd)
 
 test:
-	(cd src; julia run_tests.jl)
+	(cd test; julia run_tests.jl)
 
 clean:
 	rm -f *~
