@@ -17,6 +17,10 @@ QMD=	quarto/_ldoc/testing.qmd \
 quarto/_ldoc/%.qmd: src/%.jl
 	lua src/ldoc.lua -p quarto -highlight julia $< -o $@
 
+quarto/_ldoc/%.qmd: test/%.jl
+	lua src/ldoc.lua -p quarto -highlight julia $< -o $@
+
+
 .PHONY: all test clean distclean
 
 all: ${QMD}
